@@ -1,0 +1,8 @@
+{
+  "name": "@qingyang/mahjong-core",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "main": "src/index.js"
+}
+

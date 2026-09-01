@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: qingyang-majiang
+    runtime: node
+    buildCommand: npm install
+    startCommand: npm run start:server
+    envVars:
+      - key: HOST
+        value: 0.0.0.0
+

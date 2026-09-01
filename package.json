@@ -1,0 +1,20 @@
+{
+  "name": "qingyang-majiang",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "scripts": {
+    "dev:mobile": "node scripts/mobile-server.js",
+    "dev:online": "node scripts/online-server.js",
+    "dev:lan": "HOST=0.0.0.0 node scripts/online-server.js",
+    "start:server": "node scripts/online-server.js",
+    "test": "node --test packages/mahjong-core/test/*.test.js apps/server/test/*.test.js"
+  },
+  "dependencies": {
+    "pixi.js": "^8.19.0"
+  }
+}
