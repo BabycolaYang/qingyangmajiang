@@ -382,6 +382,44 @@ test("finishes gang draw as gang ping hu when it is not zhi gang", () => {
   assert.ok(state.availableWin.detail.bonuses.some((bonus) => bonus.key === "wanGang"));
 });
 
+test("keeps the hand sorted after gang replacement draw", () => {
+  let state = startRound({ dealerSeat: 0, seed: "gang-sort-test" });
+  state.players[0].hand = [
+    "wan-1",
+    "wan-1",
+    "wan-1",
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+    "tong-5",
+    "tong-6",
+    "tong-7",
+    "east",
+  ];
+  // 整墙填同一张牌，杠补固定补到它（排序位置在中间，且避开赖子）。
+  const replacement = ["wan-2", "tiao-2", "tong-5"].find((tile) => tile !== state.laiziTile);
+  state.wall = Array.from({ length: 60 }, () => replacement);
+
+  state = anGang(state, 0, "wan-1", sequenceRandom([0, 0]));
+
+  const hand = state.players[0].hand;
+  assert.equal(state.lastDraw.tile, replacement);
+  assert.equal(hand.length, 11);
+  // 杠补牌按理牌序插入手牌（赖子最左）：与下发视图的排序一致。
+  assert.deepEqual(hand, sortTiles(hand, state.laiziTile));
+
+  // 复现联机打错牌场景：客户端视图按理牌序展示，点击杠补牌发回视图索引，
+  // 数据层按同一索引出牌必须打出的就是那张杠补牌（而不是挂在末尾的另一张）。
+  const viewHand = sortTiles(hand, state.laiziTile);
+  const viewIndex = viewHand.lastIndexOf(replacement);
+  state = discardTile(state, 0, viewIndex);
+  assert.equal(state.lastDiscard.tile, replacement);
+});
+
 test("startRound stores normalized rule config with defaults for unspecified rules", () => {
   const state = startRound({
     dealerSeat: 0,

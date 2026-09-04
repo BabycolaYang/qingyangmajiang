@@ -181,13 +181,24 @@ export function canRunFeng(waitingTiles, laiziTile, options = {}) {
   assertTile(laiziTile);
   const { mustLackOneSuit = false, exposedMeldCount = 0 } = options;
 
-  return TILE_TYPES.every((drawnTile) =>
-    canHu([...waitingTiles, drawnTile], laiziTile, {
+  // 打缺时手牌必须已缺门：横跨三门时无论摸什么牌都无法开牌，谈不上跑风。
+  if (mustLackOneSuit && !hasLackOneSuit(waitingTiles)) {
+    return false;
+  }
+
+  return TILE_TYPES.every((drawnTile) => {
+    const tiles = [...waitingTiles, drawnTile];
+    // 打缺时，摸到会破坏缺门的那门牌本就无法开牌，该牌不参与跑风判定；
+    // 其余牌摸到即能开牌才算跑风（否则打缺房永远无法跑风）。
+    if (mustLackOneSuit && !hasLackOneSuit(tiles)) {
+      return true;
+    }
+    return canHu(tiles, laiziTile, {
       mustLackOneSuit,
       exposedMeldCount,
       runFeng: true,
-    }),
-  );
+    });
+  });
 }
 
 // ==================== 七小对 ====================

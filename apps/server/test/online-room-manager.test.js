@@ -109,6 +109,89 @@ test("hand stays sorted when drawing: drawn tile sorts into hand, view and data 
   assert.deepEqual(stateForA().hand, sortTiles(hand, laiziTile));
 });
 
+test("gang replacement discards the tile clicked in the view, not another tile", () => {
+  const manager = createOnlineRoomManager();
+  const room = manager.createRoom({ clientId: "a", nickname: "房主" });
+  manager.joinRoom({ clientId: "b", nickname: "朋友", roomCode: room.code });
+  manager.startGame("a");
+  room.laiziRevealAt = Date.now() - 1;
+
+  const mySeat = manager.roomStateForClient("a").game.players[0].originalSeat;
+  const laiziTile = room.game.laiziTile;
+  const gangTile = ["wan-1", "tiao-1", "tong-1", "east"].find((tile) => tile !== laiziTile);
+
+  // 轮到"a"出牌，手里凑出 4 张同牌可暗杠（14 张）。
+  const player = room.game.players[mySeat];
+  const filler = [
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+    "tong-2",
+    "tong-3",
+    "tong-4",
+    "south",
+  ];
+  player.hand = sortTiles([...filler, gangTile, gangTile, gangTile, gangTile], laiziTile);
+  room.game.currentSeat = mySeat;
+  room.game.phase = "discard";
+
+  manager.handleAction("a", "gang", { tile: gangTile });
+
+  // 杠补后：下发视图与数据层同为理牌序。
+  const drawnTile = room.game.lastDraw.tile;
+  const viewHand = manager.roomStateForClient("a").game.players[0].hand;
+  assert.deepEqual(viewHand, sortTiles(room.game.players[mySeat].hand, laiziTile));
+
+  // 客户端按视图索引点击杠补牌（不带牌值）：打出的必须是那张杠补牌本身。
+  // 修复前数据层把杠补牌挂在末尾，视图索引会打到另一张牌。
+  const viewIndex = viewHand.lastIndexOf(drawnTile);
+  manager.handleAction("a", "discard", { handIndex: viewIndex });
+  assert.equal(room.game.lastDiscard.tile, drawnTile);
+});
+
+test("discard prefers the tile value when pre-reveal neutral ordering differs from data order", () => {
+  const manager = createOnlineRoomManager();
+  const room = manager.createRoom({ clientId: "a", nickname: "房主" });
+  manager.joinRoom({ clientId: "b", nickname: "朋友", roomCode: room.code });
+  manager.startGame("a");
+  // 保密期内：视图按中性序（赖子不置左）下发，与数据层赖子置左序不同。
+
+  const mySeat = manager.roomStateForClient("a").game.players[0].originalSeat;
+  room.game.laiziTile = "fa";
+  const player = room.game.players[mySeat];
+  const filler = [
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "wan-5",
+    "wan-6",
+    "wan-7",
+    "wan-8",
+    "wan-9",
+    "tiao-1",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+  ];
+  player.hand = sortTiles([...filler, "fa"], "fa");
+  room.game.currentSeat = mySeat;
+  room.game.phase = "discard";
+
+  // 视图（中性序）里赖子不在最左，与数据层（赖子置左）顺序不同。
+  const viewHand = manager.roomStateForClient("a").game.players[0].hand;
+  const viewIndex = viewHand.indexOf("fa");
+  assert.notEqual(viewIndex, 0);
+  assert.notDeepEqual(viewHand, player.hand);
+
+  // 客户端点的是视图里的赖子：带牌值出牌，服务器按牌值定位，打出赖子本身。
+  manager.handleAction("a", "discard", { handIndex: viewIndex, tile: "fa" });
+  assert.equal(room.game.lastDiscard.tile, "fa");
+});
+
 test("server accepts a player discard only on that player's turn", () => {
   const manager = createOnlineRoomManager();
   const room = manager.createRoom({ clientId: "a", nickname: "房主" });

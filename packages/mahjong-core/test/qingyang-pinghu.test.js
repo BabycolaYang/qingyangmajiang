@@ -102,7 +102,8 @@ test("detects a run-feng thirteen-wait shape with four laizi", () => {
   assert.equal(canRunFeng(waitingTiles, "zhong"), true);
 });
 
-test("run feng respects lack-one-suit option", () => {
+test("run feng ignores lack-breaking draws when must lack one suit", () => {
+  // 缺两门（万+条）的全听手：打缺时摸到筒牌无法开牌，该牌不参与跑风判定。
   const waitingTiles = [
     "wan-1",
     "wan-1",
@@ -120,7 +121,44 @@ test("run feng respects lack-one-suit option", () => {
   ];
 
   assert.equal(canRunFeng(waitingTiles, "zhong"), true);
-  assert.equal(canRunFeng(waitingTiles, "zhong", { mustLackOneSuit: true }), false);
+  assert.equal(canRunFeng(waitingTiles, "zhong", { mustLackOneSuit: true }), true);
+
+  // 手牌横跨三门数字牌：打缺时摸什么牌都无法开牌，不算跑风。
+  const threeSuitTiles = [
+    "wan-1",
+    "wan-1",
+    "wan-1",
+    "tiao-1",
+    "tiao-1",
+    "tiao-1",
+    "tong-1",
+    "tong-1",
+    "tong-1",
+    "zhong",
+    "zhong",
+    "zhong",
+    "zhong",
+  ];
+  assert.equal(canRunFeng(threeSuitTiles, "zhong", { mustLackOneSuit: true }), false);
+  assert.equal(canRunFeng(threeSuitTiles, "zhong"), true);
+
+  // 已缺门但并非全听（摸到筒牌以外的牌不能都开牌）。
+  const notAllWaitTiles = [
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "wan-5",
+    "wan-6",
+    "wan-7",
+    "wan-8",
+    "wan-9",
+    "tiao-1",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+  ];
+  assert.equal(canRunFeng(notAllWaitTiles, "zhong", { mustLackOneSuit: true }), false);
 });
 
 // 1 个赖子的标准平胡手牌（laiziTile = "zhong"）：四顺 + 将，无风箭对子。

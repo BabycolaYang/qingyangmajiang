@@ -1771,7 +1771,8 @@ function updateDiscardClock() {
     if (remain <= 0) {
       clearDiscardClock();
       const hand = state.game.players[0].hand;
-      triggerPixiAction("discard", { handIndex: hand.length - 1 });
+      // 附带牌值：联机时服务器按牌值定位数据层索引，避免视图序错位打错牌。
+      triggerPixiAction("discard", { handIndex: hand.length - 1, tile: hand[hand.length - 1] });
       return;
     }
     refreshIntroBase();
@@ -2389,7 +2390,10 @@ function bindTable() {
           if (action === "discard" && canHumanDiscard()) {
             sendOnline("action", {
               action: "discard",
-              payload: { handIndex: Number(button.dataset.index) },
+              payload: {
+                handIndex: Number(button.dataset.index),
+                tile: button.dataset.tile ?? undefined,
+              },
             });
           }
           if (action === "peng") {

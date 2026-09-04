@@ -447,8 +447,9 @@ export function mingGangDiscard(state, seat, random = Math.random) {
     .map((entry) => entry.total);
   const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
   if (drawnTile) {
-    // 杠后补牌同样先放在手牌最右端单独展示。
-    player.hand = [...player.hand, drawnTile];
+    // 杠补与普通摸牌同口径：按理牌序插入手牌（赖子最左）。下发视图按理牌序重排，
+    // 若核心层挂在末尾，视图索引与数据层索引会错位（点杠补牌会打出别的牌）。
+    player.hand = sortTiles([...player.hand, drawnTile], nextState.laiziTile);
     nextState.lastDraw = {
       seat,
       tile: drawnTile,
@@ -496,8 +497,8 @@ export function anGang(state, seat, tile, random = Math.random) {
     .map((entry) => entry.total);
   const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
   if (drawnTile) {
-    // 杠后补牌同样先放在手牌最右端单独展示。
-    player.hand = [...player.hand, drawnTile];
+    // 杠补与普通摸牌同口径：按理牌序插入手牌（赖子最左），视图索引与数据层索引一致。
+    player.hand = sortTiles([...player.hand, drawnTile], nextState.laiziTile);
     nextState.lastDraw = {
       seat,
       tile: drawnTile,
@@ -558,8 +559,8 @@ export function buGang(state, seat, tile, random = Math.random) {
     .map((entry) => entry.total);
   const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
   if (drawnTile) {
-    // 杠后补牌同样先放在手牌最右端单独展示。
-    player.hand = [...player.hand, drawnTile];
+    // 杠补与普通摸牌同口径：按理牌序插入手牌（赖子最左），视图索引与数据层索引一致。
+    player.hand = sortTiles([...player.hand, drawnTile], nextState.laiziTile);
     nextState.lastDraw = {
       seat,
       tile: drawnTile,

@@ -304,7 +304,17 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
       if (room.game.currentSeat !== seat || room.game.phase !== "discard") {
         throw fail("NOT_YOUR_TURN", "还没轮到你出牌");
       }
-      room.game = discardTile(room.game, seat, Number(payload.handIndex));
+      // 客户端的 handIndex 基于下发视图的理牌序；翻牌公开前视图按"中性排序"下发
+      //（不暴露赖子），与数据层的赖子置左序存在位置差异。客户端会随行附上点击的
+      // 牌值，优先按牌值定位数据层索引，保证打出的就是玩家点的那张牌。
+      let handIndex = Number(payload.handIndex);
+      if (typeof payload.tile === "string") {
+        const valueIndex = room.game.players[seat].hand.indexOf(payload.tile);
+        if (valueIndex >= 0) {
+          handIndex = valueIndex;
+        }
+      }
+      room.game = discardTile(room.game, seat, handIndex);
       refreshPendingReactions(room);
       return room;
     }
