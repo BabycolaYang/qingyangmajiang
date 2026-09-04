@@ -1,4 +1,7 @@
 node_modules/
+# 账号数据由服务器运行时生成，不入库（避免本地测试账号推上服务器）
+data/
+logs/
 .expo/
 .next/
 dist/
