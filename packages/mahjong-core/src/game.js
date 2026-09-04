@@ -1,4 +1,5 @@
 import {
+  SUITS,
   TILE_TYPES,
   countTile,
   countTiles,
@@ -10,6 +11,8 @@ import {
 } from "./tiles.js";
 import {
   canRunFeng,
+  normalizeRuleConfig,
+  resolveWinDetail,
   resolveWinType,
   scoreWin,
   nextDealer,
@@ -41,9 +44,17 @@ export function shuffleTiles(tiles, random = Math.random) {
   return shuffled;
 }
 
-export function sortTiles(tiles) {
+export function sortTiles(tiles, laiziTile = null) {
   const order = new Map(TILE_TYPES.map((tile, index) => [tile, index]));
-  return [...tiles].sort((left, right) => order.get(left) - order.get(right));
+  // 赖子固定排在最左边，其余按花色点数排序。
+  return [...tiles].sort((left, right) => {
+    const leftLaizi = laiziTile && left === laiziTile ? 0 : 1;
+    const rightLaizi = laiziTile && right === laiziTile ? 0 : 1;
+    if (leftLaizi !== rightLaizi) {
+      return leftLaizi - rightLaizi;
+    }
+    return order.get(left) - order.get(right);
+  });
 }
 
 export function drawFromBackByDice(wall, diceTotal) {
@@ -56,6 +67,39 @@ export function drawFromBackByDice(wall, diceTotal) {
   return tile;
 }
 
+// 杠牌补牌取牌：骰子点数 n 对应排尾第 n 墩（第 1 墩最靠排尾，与翻牌同口径）。
+// consumedStacks 记录此前取过牌的墩号（翻牌 1 次 + 更早的每次杠补各 1 次）：
+//   - 目标墩的上层已被取走 → 取该墩剩下的下层（"一张是翻牌/被杠，另一张还在"）；
+//   - 目标墩两张都已取走，或剩余牌墙数不到第 n 墩 → 空过（返回 null，不补牌）。
+export function takeGangReplacement(wall, consumedStacks, diceTotal) {
+  const taken = consumedStacks.filter((stack) => stack === diceTotal).length;
+  if (taken >= 2) {
+    return null;
+  }
+  // 更靠排尾一侧（墩号更小）的每次取牌使目标墩位置向排尾移 1 张。
+  const nearer = consumedStacks.filter((stack) => stack < diceTotal).length;
+  const position = taken === 0 ? 2 * diceTotal - nearer : 2 * diceTotal - 1 - nearer;
+  const index = wall.length - position;
+  if (index < 0) {
+    return null;
+  }
+  const [tile] = wall.splice(index, 1);
+  return tile;
+}
+
+// 翻指示牌：每墩 2 张，从排尾按墩数出 diceTotal 墩，取该墩上层一张翻开。
+// 排尾最后一墩为第 1 墩；墩内数组顺序为 [上层, 底层]，故第 N 墩上层下标为 len - 2N。
+export function drawIndicatorFromBack(wall, diceTotal) {
+  if (wall.length === 0) {
+    throw new Error("Cannot draw from an empty wall");
+  }
+  const maxStacks = Math.floor(wall.length / 2);
+  const safeTotal = Math.max(1, Math.min(diceTotal, maxStacks));
+  const index = Math.max(0, Math.min(wall.length - 1, wall.length - 2 * safeTotal));
+  const [tile] = wall.splice(index, 1);
+  return tile;
+}
+
 export function startRound(options = {}) {
   const {
     dealerSeat = 0,
@@ -63,6 +107,7 @@ export function startRound(options = {}) {
     playerNames = ["我", "下家", "对家", "上家"],
     beanBalances = [1000, 1000, 1000, 1000],
     mustLackOneSuit = false,
+    ruleConfig = null,
   } = options;
 
   const random = createSeededRandom(seed);
@@ -76,26 +121,56 @@ export function startRound(options = {}) {
     beans: beanBalances[seat] ?? 1000,
   }));
 
-  for (let round = 0; round < 13; round += 1) {
-    for (const player of players) {
-      player.hand.push(wall.shift());
+  // 标准抓牌流程（青阳麻将与国标一致）：
+  // 1) 每人先抓 3 次，每次 2 墩（4 张），共 12 张，从庄家开始按座位顺序轮流；
+  // 2) 头家（庄家）跳着抓最后 2 张：抓第 1 张、跳过第 2 张、再抓第 3 张（共 14 张）；
+  //    被跳过的那张仍留在墙头，下家补抓时自然摸到，不损失任何牌；
+  // 3) 其余三家按座位顺序依次各补抓 1 张（各 13 张）。
+  const seatOrder = [0, 1, 2, 3].map((offset) => (dealerSeat + offset) % players.length);
+  for (let batch = 0; batch < 3; batch += 1) {
+    for (const seat of seatOrder) {
+      for (let tileIndex = 0; tileIndex < 4; tileIndex += 1) {
+        players[seat].hand.push(wall.shift());
+      }
     }
   }
   players[dealerSeat].hand.push(wall.shift());
-
-  for (const player of players) {
-    player.hand = sortTiles(player.hand);
+  players[dealerSeat].hand.push(wall.splice(1, 1)[0]);
+  for (const seat of seatOrder.slice(1)) {
+    players[seat].hand.push(wall.shift());
   }
 
   const laiziDice = rollDice(random);
-  const indicatorTile = drawFromBackByDice(wall, laiziDice.total);
+  // 翻牌骰的和按墩从排尾数（第 N 墩上层翻开），与桌面牌墙可视位置一一对应。
+  const indicatorTile = drawIndicatorFromBack(wall, laiziDice.total);
   const laiziTile = nextLaiziFromIndicator(indicatorTile);
+
+  // 开局骰：庄家开抓前先扔一次。点数和决定从哪家面前开墙（从庄家数起），
+  // 两颗骰子中较小的点数决定在该家墙边留几墩后开始抓；
+  // 翻牌骰（laiziDice）则是抓完牌后扔的第二次，从排尾数出翻牌。
+  // 注意：为保持既有种子局面的翻牌结果不变，openingDice 在 laiziDice 之后取随机数。
+  const openingDice = rollDice(random);
+
+  // 有效摸牌区（死墙）：翻牌那墩及其排尾方向各墩不可摸，另加翻牌靠牌头一侧的
+  // 一墩（俗称"翻牌前一墩"），共 (骰数+1) 墩；扣除翻牌自身 1 张后初始死墙 = 2×骰数+1 张。
+  // 例：翻牌骰 3 → 倒数第 4 墩起不可摸（7 张）。摸到边界即流局；
+  // 之后每次杠牌，边界（墩）= max(翻牌骰, 杠骰) + 1 + 杠的次数（见 advanceDeadWallByGang）。
+  const deadWallTiles = laiziDice.total * 2 + 1;
+
+  // 确定赖子后再理牌，让赖子排在手牌最左边。
+  // initialHand 保留发牌原始顺序（理牌前），供开局发牌动画按抓牌批次明牌展示、发完再统一排序。
+  for (const player of players) {
+    player.initialHand = [...player.hand];
+    player.hand = sortTiles(player.hand, laiziTile);
+  }
 
   return {
     id: `round-${seed}`,
     seed,
     status: "playing",
     mustLackOneSuit,
+    ruleConfig: normalizeRuleConfig(ruleConfig),
+    penaltyStreak: null,
     wall,
     players,
     dealerSeat,
@@ -105,7 +180,12 @@ export function startRound(options = {}) {
     laiziDice,
     indicatorTile,
     laiziTile,
-    diceHistory: [{ reason: "laizi", ...laiziDice }],
+    openingDice,
+    deadWallTiles,
+    diceHistory: [
+      { reason: "opening", seat: dealerSeat, ...openingDice },
+      { reason: "laizi", seat: dealerSeat, ...laiziDice },
+    ],
     turn: 0,
     lastDiscard: null,
     lastDraw: null,
@@ -121,6 +201,7 @@ export function startRound(options = {}) {
         indicatorTile,
         laiziTile,
         dice: laiziDice,
+        openingDice,
       },
     ],
   };
@@ -135,7 +216,8 @@ export function drawForCurrentSeat(state, options = {}) {
   if (nextState.phase !== "draw") {
     throw new Error(`Expected draw phase, got ${nextState.phase}`);
   }
-  if (nextState.wall.length === 0) {
+  // 有效摸牌区：墙头摸到死墙边界（含牌墙摸穿）即流局。
+  if (nextState.wall.length <= (nextState.deadWallTiles ?? 0)) {
     nextState.status = "ended";
     nextState.phase = "ended";
     nextState.nextDealerSeat = nextDealer({
@@ -154,7 +236,9 @@ export function drawForCurrentSeat(state, options = {}) {
   nextState.runFengBeforeDraw[player.seat] = wasRunFengBeforeDraw;
 
   const tile = nextState.wall.shift();
-  player.hand = sortTiles([...player.hand, tile]);
+  // 摸牌即理牌：摸到的牌按顺序插入手牌（赖子最左）。
+  // 客户端展示顺序与 handIndex 打出索引因此始终一致，摸牌不再挂在末尾。
+  player.hand = sortTiles([...player.hand, tile], nextState.laiziTile);
   nextState.lastDraw = {
     seat: player.seat,
     tile,
@@ -189,6 +273,8 @@ export function discardTile(state, seat, handIndex) {
   }
 
   const [tile] = player.hand.splice(handIndex, 1);
+  // 打出后重新理牌（赖子仍排最左），之前单放的摸牌此时归位。
+  player.hand = sortTiles(player.hand, nextState.laiziTile);
   player.discards.push(tile);
   nextState.lastDraw = null;
   nextState.lastDiscard = {
@@ -199,7 +285,61 @@ export function discardTile(state, seat, handIndex) {
   nextState.availableWin = null;
   nextState.phase = "reaction";
   nextState.log.push({ type: "discard", seat, tile });
+  applyStreakPenalty(nextState, seat, tile);
 
+  return nextState;
+}
+
+// 连打惩罚：四家连续打出同一张牌时，第一个打出的玩家向其余三家各付 1 子（折算为倍率豆）。
+// 打出不同的牌立即重置计数；同一玩家重复打同一张不重复计数；触发后重新开表。
+function applyStreakPenalty(nextState, seat, tile) {
+  const rules = nextState.ruleConfig?.rules;
+  if (!rules?.streakPenalty) {
+    return;
+  }
+
+  const streak = nextState.penaltyStreak;
+  if (!streak || streak.tile !== tile) {
+    nextState.penaltyStreak = { tile, seats: [seat] };
+    return;
+  }
+  if (streak.seats.includes(seat)) {
+    return;
+  }
+  streak.seats.push(seat);
+  if (streak.seats.length < nextState.players.length) {
+    return;
+  }
+
+  const payerSeat = streak.seats[0];
+  const amount = nextState.ruleConfig.multiplier;
+  for (const player of nextState.players) {
+    if (player.seat === payerSeat) {
+      continue;
+    }
+    player.beans += amount;
+  }
+  nextState.players[payerSeat].beans -= amount * (nextState.players.length - 1);
+  nextState.log.push({
+    type: "streakPenalty",
+    tile,
+    payerSeat,
+    amount,
+    seats: [...streak.seats],
+  });
+  nextState.penaltyStreak = null;
+}
+
+// 摸牌展示一段时间后调用：把右端单放的摸牌并入手牌排序（赖子仍在最左），
+// 之后不再单独展示摸牌。若期间已打出牌（lastDraw 已清空）则安全无操作。
+export function mergeDrawnTile(state, seat = state.currentSeat) {
+  const nextState = cloneGame(state);
+  if (nextState.status !== "playing" || !nextState.lastDraw || nextState.lastDraw.seat !== seat) {
+    return nextState;
+  }
+  const player = nextState.players[seat];
+  player.hand = sortTiles(player.hand, nextState.laiziTile);
+  nextState.lastDraw = null;
   return nextState;
 }
 
@@ -249,6 +389,86 @@ export function pengDiscard(state, seat) {
   return nextState;
 }
 
+// 反应阶段的明杠：别人打出的牌，自己手里已有 3 张（暗刻），可以亮牌开明杠。
+export function getMingGangOptions(state, seat) {
+  if (state.phase !== "reaction" || !state.lastDiscard || state.lastDiscard.seat === seat) {
+    return [];
+  }
+  const player = state.players[seat];
+  if (countTile(player.hand, state.lastDiscard.tile) < 3) {
+    return [];
+  }
+  return [state.lastDiscard.tile];
+}
+
+// 明杠：亮出手里的 3 张与别人打出的 1 张组成杠子，掷骰从牌墙尾部补抓 1 张。
+// 杠牌推进死墙边界：边界（墩）= max(翻牌骰, 历次杠骰) + 1 + 杠的次数，
+// 张数 = 墩数×2 − 界内已取走的张数（翻牌 1 张 + 每次杠补 1 张）。
+// 例：翻 5 不杠 → 5+1=6 墩；翻 3 杠 5 → 5+1+1=7 墩；翻 3 杠 2 → 3+1+1=5 墩；
+// 杠骰比翻牌骰小时不拉低基数（仍取历史最大），比翻牌骰大时抬高基数；每次杠至少再推进 1 墩。
+function advanceDeadWallByGang(state, dice) {
+  const priorKongs = state.diceHistory.filter(
+    (entry) => entry.reason !== "opening" && entry.reason !== "laizi"
+  );
+  const kongCount = priorKongs.length + 1;
+  const baseDice = priorKongs.reduce(
+    (max, entry) => Math.max(max, entry.total),
+    state.laiziDice.total
+  );
+  state.deadWallTiles = (Math.max(baseDice, dice.total) + 1 + kongCount) * 2 - 1 - kongCount;
+}
+
+export function mingGangDiscard(state, seat, random = Math.random) {
+  const nextState = cloneGame(state);
+  const options = getMingGangOptions(nextState, seat);
+  if (options.length === 0) {
+    throw new Error("Ming gang is not available");
+  }
+
+  const tile = options[0];
+  const player = nextState.players[seat];
+  removeTiles(player.hand, tile, 3);
+  player.melds.push({
+    type: "mingGang",
+    tile,
+    tiles: [tile, tile, tile, tile],
+    fromSeat: nextState.lastDiscard.seat,
+  });
+
+  const discarder = nextState.players[nextState.lastDiscard.seat];
+  discarder.discards.splice(nextState.lastDiscard.discardIndex, 1);
+
+  const wasRunFengBeforeGang = nextState.runFengBeforeDraw[seat] === true;
+  const dice = rollDice(random);
+  advanceDeadWallByGang(nextState, dice);
+  // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌，牌墙见底同理）。
+  const consumedStacks = nextState.diceHistory
+    .filter((entry) => entry.reason !== "opening")
+    .map((entry) => entry.total);
+  const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
+  if (drawnTile) {
+    // 杠后补牌同样先放在手牌最右端单独展示。
+    player.hand = [...player.hand, drawnTile];
+    nextState.lastDraw = {
+      seat,
+      tile: drawnTile,
+      fromGang: true,
+    };
+    nextState.availableWin = buildAvailableWin(nextState, seat, {
+      drawnTile,
+      isGangDraw: true,
+      wasRunFengBeforeGang,
+    });
+  }
+  nextState.diceHistory.push({ reason: "mingGang", seat, ...dice });
+  nextState.currentSeat = seat;
+  nextState.phase = "discard";
+  nextState.lastDiscard = null;
+  nextState.log.push({ type: "mingGang", seat, tile, dice, drawnTile });
+
+  return nextState;
+}
+
 export function getAnGangOptions(state, seat) {
   if (state.status !== "playing" || state.phase !== "discard" || state.currentSeat !== seat) {
     return [];
@@ -269,22 +489,92 @@ export function anGang(state, seat, tile, random = Math.random) {
   player.melds.push({ type: "anGang", tile, tiles: [tile, tile, tile, tile], concealed: true });
 
   const dice = rollDice(random);
-  const drawnTile = drawFromBackByDice(nextState.wall, dice.total);
-  player.hand = sortTiles([...player.hand, drawnTile]);
-  nextState.lastDraw = {
-    seat,
-    tile: drawnTile,
-    fromGang: true,
-  };
+  advanceDeadWallByGang(nextState, dice);
+  // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌）。
+  const consumedStacks = nextState.diceHistory
+    .filter((entry) => entry.reason !== "opening")
+    .map((entry) => entry.total);
+  const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
+  if (drawnTile) {
+    // 杠后补牌同样先放在手牌最右端单独展示。
+    player.hand = [...player.hand, drawnTile];
+    nextState.lastDraw = {
+      seat,
+      tile: drawnTile,
+      fromGang: true,
+    };
+    nextState.availableWin = buildAvailableWin(nextState, seat, {
+      drawnTile,
+      isGangDraw: true,
+      wasRunFengBeforeGang,
+    });
+  }
   nextState.diceHistory.push({ reason: "gang", seat, ...dice });
-  nextState.availableWin = buildAvailableWin(nextState, seat, {
-    drawnTile,
-    isGangDraw: true,
-    wasRunFengBeforeGang,
-  });
   nextState.phase = "discard";
   nextState.log.push({
     type: "anGang",
+    seat,
+    tile,
+    dice,
+    drawnTile,
+    wasRunFengBeforeGang,
+  });
+
+  return nextState;
+}
+
+// 补杠（加杠）：碰过某牌后，自己回合手里又拿到第 4 张，可把碰组升级为明杠并从墙尾补牌。
+export function getBuGangOptions(state, seat) {
+  if (state.status !== "playing" || state.phase !== "discard" || state.currentSeat !== seat) {
+    return [];
+  }
+  const player = state.players[seat];
+  const pengTiles = player.melds
+    .filter((meld) => meld.type === "peng")
+    .map((meld) => meld.tile);
+  return TILE_TYPES.filter((tile) => pengTiles.includes(tile) && countTile(player.hand, tile) >= 1);
+}
+
+// 执行补杠：手牌移除第 4 张并入对应碰组（type 升级为 buGang），掷骰从墙尾补一张。
+// 牌墙见底时仍可成杠，只是补不出牌（与明杠口径一致）。
+export function buGang(state, seat, tile, random = Math.random) {
+  const nextState = cloneGame(state);
+  const player = nextState.players[seat];
+  if (!getBuGangOptions(nextState, seat).includes(tile)) {
+    throw new Error(`Bu gang is not available for ${tile}`);
+  }
+
+  const wasRunFengBeforeGang = nextState.runFengBeforeDraw[seat] === true;
+  removeTiles(player.hand, tile, 1);
+  const pengMeld = player.melds.find((meld) => meld.type === "peng" && meld.tile === tile);
+  pengMeld.type = "buGang";
+  pengMeld.tiles = [...pengMeld.tiles, tile];
+
+  const dice = rollDice(random);
+  advanceDeadWallByGang(nextState, dice);
+  // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌）。
+  const consumedStacks = nextState.diceHistory
+    .filter((entry) => entry.reason !== "opening")
+    .map((entry) => entry.total);
+  const drawnTile = takeGangReplacement(nextState.wall, consumedStacks, dice.total);
+  if (drawnTile) {
+    // 杠后补牌同样先放在手牌最右端单独展示。
+    player.hand = [...player.hand, drawnTile];
+    nextState.lastDraw = {
+      seat,
+      tile: drawnTile,
+      fromGang: true,
+    };
+    nextState.availableWin = buildAvailableWin(nextState, seat, {
+      drawnTile,
+      isGangDraw: true,
+      wasRunFengBeforeGang,
+    });
+  }
+  nextState.diceHistory.push({ reason: "buGang", seat, ...dice });
+  nextState.phase = "discard";
+  nextState.log.push({
+    type: "buGang",
     seat,
     tile,
     dice,
@@ -302,9 +592,10 @@ export function finishWin(state, seat) {
   }
 
   const settlement = scoreWin({
-    winType: nextState.availableWin.winType,
+    winDetail: nextState.availableWin.detail,
     winnerSeat: seat,
     dealerSeat: nextState.dealerSeat,
+    multiplier: nextState.ruleConfig?.multiplier,
   });
   for (const player of nextState.players) {
     player.beans += settlement.deltas[player.seat];
@@ -331,21 +622,29 @@ export function chooseBotDiscardIndex(player, laiziTile, options = {}) {
     return -1;
   }
 
-  const { mustLackOneSuit = false } = options;
+  const { mustLackOneSuit = false, ruleConfig } = options;
+  // 打缺感知：缺一门模式下，若手牌仍横跨 3 门数字牌，锁定数量最少的一门作为
+  // 目标缺门；打这门牌获得大额加分，确保机器人会主动打缺。
+  // （此时 resolveWinType 对所有候选都返回 0 进张，加分项可完全主导出牌选择。）
+  const lackSuit = mustLackOneSuit ? chooseLackSuit(player.hand).suit : null;
+
   const exposedMeldCount = player.melds?.length ?? 0;
   const candidates = player.hand.map((tile, index) => {
     const remaining = player.hand.filter((_, handIndex) => handIndex !== index);
     const winningDraws = countWinningDraws(remaining, laiziTile, {
       exposedMeldCount,
       mustLackOneSuit,
+      ruleConfig,
     });
     const structureScore = scoreHandStructure(remaining, laiziTile);
     const discardCost = scoreTileUsefulness(tile, player.hand, laiziTile);
     const laiziPenalty = tile === laiziTile ? 100000 : 0;
+    const lackBonus =
+      lackSuit && isNumberTile(tile) && getSuit(tile) === lackSuit ? 4000 : 0;
 
     return {
       index,
-      score: winningDraws * 1000 + structureScore - discardCost - laiziPenalty,
+      score: winningDraws * 1000 + structureScore - discardCost - laiziPenalty + lackBonus,
     };
   });
 
@@ -359,10 +658,90 @@ export function chooseBotDiscardIndex(player, laiziTile, options = {}) {
   return candidates[0].index;
 }
 
+// 反应阶段的机器人碰/杠决策：返回 { action: "gang" | "peng", tile } 或 null（过）。
+// 规则：明杠基本必杠（多摸一张牌且保持结构）；碰牌要求不亏结构（成刻 +90 能
+// 弥补拆搭损失），且不碰赖子、不碰属于应打缺花色的牌。
+export function chooseBotReaction(state, seat) {
+  const player = state.players[seat];
+
+  const gangOptions = getMingGangOptions(state, seat);
+  if (gangOptions.length > 0 && !isBlockedForLack(player.hand, gangOptions[0], state.mustLackOneSuit)) {
+    return { action: "gang", tile: gangOptions[0] };
+  }
+
+  const pengOptions = getPengOptions(state, seat);
+  if (pengOptions.length === 0) {
+    return null;
+  }
+  const tile = pengOptions[0];
+  // 赖子当万能牌用，不拿来碰。
+  if (tile === state.laiziTile) {
+    return null;
+  }
+  if (isBlockedForLack(player.hand, tile, state.mustLackOneSuit)) {
+    return null;
+  }
+
+  // 比较碰前后的结构分：碰后剩 11 张 + 成刻（+90），允许小幅亏损（-12）换速度。
+  const remaining = [...player.hand];
+  removeTiles(remaining, tile, 2);
+  const scoreBefore = scoreHandStructure(player.hand, state.laiziTile);
+  const scoreAfter = scoreHandStructure(remaining, state.laiziTile) + 90;
+  if (scoreAfter < scoreBefore - 12) {
+    return null;
+  }
+  return { action: "peng", tile };
+}
+
+// 统计手牌中某数字花色的张数。
+function countSuitTiles(tiles, suit) {
+  return tiles.reduce(
+    (total, tile) => total + (isNumberTile(tile) && getSuit(tile) === suit ? 1 : 0),
+    0,
+  );
+}
+
+// 定缺目标：手牌横跨 3 门数字牌时，返回张数最少的花色；已缺门（≤2 门）则返回 null。
+function chooseLackSuit(tiles) {
+  const suitsInHand = SUITS.filter((suit) => countSuitTiles(tiles, suit) > 0);
+  if (suitsInHand.length < 3) {
+    return { suit: null, count: 0 };
+  }
+  let lackSuit = suitsInHand[0];
+  let lackCount = countSuitTiles(tiles, lackSuit);
+  for (const suit of suitsInHand.slice(1)) {
+    const count = countSuitTiles(tiles, suit);
+    if (count < lackCount) {
+      lackSuit = suit;
+      lackCount = count;
+    }
+  }
+  return { suit: lackSuit, count: lackCount };
+}
+
+// 缺一门模式下，判断这张牌是否属于应打缺的花色（此时碰/杠会把它锁进副露，妨碍打缺）。
+function isBlockedForLack(tiles, tile, mustLackOneSuit) {
+  if (!mustLackOneSuit || !isNumberTile(tile)) {
+    return false;
+  }
+  const { suit: lackSuit } = chooseLackSuit(tiles);
+  return lackSuit !== null && getSuit(tile) === lackSuit;
+}
+
 function countWinningDraws(waitingTiles, laiziTile, options = {}) {
-  const { exposedMeldCount = 0, mustLackOneSuit = false } = options;
+  const { exposedMeldCount = 0, mustLackOneSuit = false, ruleConfig } = options;
+  const config = normalizeRuleConfig(ruleConfig);
   if (canRunFeng(waitingTiles, laiziTile, { exposedMeldCount, mustLackOneSuit })) {
-    return TILE_TYPES.length;
+    // 全听手摸任何牌都胡，但按跑风分类结算：相应基础型全部关闭时，
+    // 全听手反而一手不可胡（0 进张），避免机器人在受限房间里高估全听型。
+    const laiziCount = countTile(waitingTiles, laiziTile);
+    const runFengEnabled =
+      laiziCount === 0
+        ? config.rules.enDou || config.rules.paoFeng1
+        : laiziCount === 1
+          ? config.rules.paoFeng1 || config.rules.paoFeng2
+          : config.rules.paoFeng2;
+    return runFengEnabled ? TILE_TYPES.length : 0;
   }
 
   return TILE_TYPES.reduce((total, drawnTile) => {
@@ -371,6 +750,7 @@ function countWinningDraws(waitingTiles, laiziTile, options = {}) {
       laiziTile,
       exposedMeldCount,
       mustLackOneSuit,
+      ruleConfig,
     });
     return total + (winType ? 1 : 0);
   }, 0);
@@ -445,21 +825,24 @@ function scoreTileShape(tile, counts) {
 
 function buildAvailableWin(state, seat, extra) {
   const player = state.players[seat];
-  const winType = resolveWinType({
+  const detail = resolveWinDetail({
     tiles: player.hand,
     laiziTile: state.laiziTile,
     mustLackOneSuit: state.mustLackOneSuit,
     exposedMeldCount: player.melds.length,
+    melds: player.melds,
+    ruleConfig: state.ruleConfig,
     ...extra,
   });
 
-  if (!winType) {
+  if (!detail) {
     return null;
   }
 
   return {
     seat,
-    winType,
+    winType: detail.baseType,
+    detail,
     drawnTile: extra.drawnTile,
   };
 }

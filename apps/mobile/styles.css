@@ -96,6 +96,24 @@ input {
   color: rgba(255, 255, 255, 0.72);
 }
 
+/* 联机断线横幅：金色提示条；warn 态偏橙红警示（重连失败/座位保留提示）。 */
+.online-banner {
+  margin: 0 0 12px;
+  padding: 10px 14px;
+  border: 1px solid rgba(195, 145, 46, 0.55);
+  border-radius: 10px;
+  background: linear-gradient(180deg, rgba(195, 145, 46, 0.28), rgba(195, 145, 46, 0.16));
+  color: #ffe9bd;
+  font-size: 14px;
+  text-align: center;
+}
+
+.online-banner.warn {
+  border-color: rgba(226, 106, 63, 0.6);
+  background: linear-gradient(180deg, rgba(226, 106, 63, 0.3), rgba(226, 106, 63, 0.16));
+  color: #ffd9c4;
+}
+
 .beans {
   min-width: 96px;
   padding: 8px 10px;
@@ -247,6 +265,41 @@ button.gold {
 
 .toggle.on span {
   transform: translateX(26px);
+}
+
+/* 创建房间规则配置页 */
+.mult-row {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin: 6px 0 10px;
+}
+
+.mult-btn {
+  min-height: 38px;
+  border-radius: 10px;
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.05);
+  color: rgba(255, 236, 200, 0.85);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.mult-btn.on {
+  background: var(--gold);
+  color: #3a2a05;
+  border-color: transparent;
+}
+
+.rule-list {
+  max-height: 44vh;
+  overflow-y: auto;
+}
+
+.rule-list .rule-name {
+  font-size: 14px;
+  line-height: 1.35;
+  padding-right: 4px;
 }
 
 .table {
@@ -557,8 +610,8 @@ button.gold {
 
 .tile {
   position: relative;
-  width: 38px;
-  height: 54px;
+  width: 44px;
+  height: 62px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -573,11 +626,11 @@ button.gold {
 }
 
 .tile.small {
-  width: 24px;
-  height: 34px;
+  width: 28px;
+  height: 40px;
   border-radius: 5px;
   border-bottom-width: 3px;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .tile.back {
@@ -588,15 +641,19 @@ button.gold {
 .tile.laizi::after {
   content: "赖";
   position: absolute;
-  right: -5px;
-  top: -6px;
-  min-width: 16px;
-  height: 16px;
+  right: -7px;
+  top: -8px;
+  min-width: 20px;
+  height: 20px;
   border-radius: 999px;
   background: var(--red);
+  border: 1.5px solid #ffd85b;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.35);
   color: white;
-  font-size: 10px;
-  line-height: 16px;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 19px;
+  text-align: center;
 }
 
 .tile.drawn {
@@ -678,6 +735,27 @@ button.gold {
   gap: 3px;
 }
 
+/* 文字牌位被牌面图片替换：图片铺满 .tile 内容区，保留外框质感 */
+.tile .tile-face {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  border-radius: inherit;
+  pointer-events: none;
+  user-select: none;
+}
+
+/* 结算里的碰/杠副露分组：浅色底托与手牌区分隔 */
+.revealed-meld {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 9px;
+  padding: 3px;
+  background: rgba(49, 112, 106, 0.14);
+  border-radius: 7px;
+}
+
 @media (min-width: 900px) and (min-height: 620px) {
   .table {
     grid-template-rows: 58px minmax(620px, 1fr) 64px;
@@ -693,7 +771,7 @@ button.gold {
   .board {
     width: min(1180px, calc(100vw - 32px));
     min-height: 650px;
-    margin: 0 auto;
+    margin: 8px auto 50px;
   }
 
   .center-pool {
@@ -873,7 +951,8 @@ button.gold {
 
 .board {
   min-height: 0;
-  margin: 8px 24px 0;
+  /* 上下外边距对称（顶部 42px 头栏 + 8px = 50px），让画布在木质边框内垂直居中，不再偏下压框。 */
+  margin: 8px 24px 50px;
   border: 1px solid rgba(133, 249, 211, 0.25);
   border-radius: 18px;
   background:
@@ -1187,7 +1266,7 @@ button.gold {
   .board {
     width: min(1180px, calc(100vw - 32px));
     min-height: 650px;
-    margin: 0 auto;
+    margin: 8px auto 50px;
   }
 
   .center-pool {
@@ -1429,5 +1508,336 @@ button.gold {
   .player.right .hand {
     transform: rotate(-90deg);
     transform-origin: center;
+  }
+}
+
+/* 欢乐麻将参考布局：牌桌占满屏幕，操作按钮悬浮在牌桌右侧（圆形 碰/杠/胡/过）。 */
+.table {
+  grid-template-rows: 42px minmax(0, 1fr);
+}
+
+/* 操作按钮（碰/杠/胡/过/下一局/大厅）横排悬浮在手牌行右端上方。 */
+.controls {
+  position: absolute;
+  right: 20%;
+  bottom: 13%;
+  z-index: 6;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 12px;
+  width: auto;
+  max-width: 70%;
+  min-height: 0;
+  margin: 0;
+  padding: 0;
+  background: transparent;
+}
+
+.controls button {
+  width: 66px;
+  height: 66px;
+  min-width: 0;
+  min-height: 0;
+  padding: 0;
+  border-radius: 50%;
+  font-size: 22px;
+  font-weight: 900;
+  line-height: 1;
+}
+
+/* 胡/杠/下一局按钮带多字文案（如"杠 5万""杠上平胡""下一局"），用胶囊形避免圆形截字换行。 */
+.controls button[data-action="win"],
+.controls button[data-action="gang"],
+.controls button[data-action="next-round"] {
+  width: auto;
+  padding: 0 18px;
+  border-radius: 33px;
+  font-size: 18px;
+}
+
+.controls button[data-action="gang"],
+.controls button[data-action="peng"] {
+  border-color: #ffe28a;
+  background: radial-gradient(circle at 35% 25%, #ffeaa4, #dc971e 68%, #9b5e12);
+  color: #382006;
+  text-shadow: 0 1px rgba(255, 255, 255, 0.45);
+}
+
+.controls button[data-action="pass"],
+.controls button[data-action="back"] {
+  border-color: #75d9d0;
+  background: radial-gradient(circle at 35% 25%, #b1f4ec, #2dabae 68%, #13747f);
+  color: #063b42;
+}
+
+.controls .badge {
+  display: none;
+}
+
+@media (max-width: 520px) {
+  .controls button {
+    width: 54px;
+    height: 54px;
+    font-size: 18px;
+  }
+}
+
+/* ===== 联机主页（腾讯麻将风格：暗红金页 + 顶部用户条 + 中央大按钮 + 底部导航） ===== */
+.app.home {
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(255, 214, 130, 0.16), transparent 55%),
+    radial-gradient(140% 70% at 50% 110%, rgba(0, 0, 0, 0.35), transparent 60%),
+    linear-gradient(180deg, #8c2020 0%, #5d1212 52%, #430f0f 100%);
+  display: flex;
+  flex-direction: column;
+}
+
+.home-topbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  padding: calc(10px + env(safe-area-inset-top)) 14px 10px;
+}
+
+.home-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.avatar {
+  width: 46px;
+  height: 46px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  font-size: 20px;
+  font-weight: 800;
+  color: #5d1212;
+  background: linear-gradient(180deg, #ffe9b0, #e8b45a);
+  border: 2px solid rgba(255, 255, 255, 0.75);
+  box-shadow: 0 3px 8px rgba(0, 0, 0, 0.3);
+}
+
+.home-user-meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  color: #fff;
+}
+
+.home-user-meta strong {
+  font-size: 15px;
+  text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4);
+}
+
+.bean-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 88px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  font-weight: 800;
+  font-size: 14px;
+}
+
+.bean-pill i {
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: radial-gradient(circle at 35% 30%, #ffe28a, #d99a1f 70%);
+}
+
+.home-status {
+  color: rgba(255, 255, 255, 0.82);
+  font-size: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.18);
+}
+
+.home-topbar-right {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+/* 顶栏登录入口 / 登录态徽标 */
+.home-auth-btn {
+  min-height: 30px;
+  padding: 0 12px;
+  border-radius: 999px;
+  font-size: 12px;
+  font-weight: 800;
+  color: #5d1212;
+  background: linear-gradient(180deg, #ffe9b0, #e8b45a);
+  border: 1px solid rgba(255, 255, 255, 0.55);
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.25);
+}
+
+.home-auth-badge {
+  color: #fff;
+  font-size: 12px;
+  font-weight: 700;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  border-radius: 999px;
+  padding: 4px 10px;
+  background: rgba(0, 0, 0, 0.18);
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* 登录/注册面板输入间距 */
+.auth-panel input {
+  margin-bottom: 8px;
+}
+
+.auth-panel .status-text.error {
+  color: #ffd7d7;
+  font-weight: 700;
+}
+
+.home-screen {
+  flex: 1;
+  width: min(560px, 100%);
+  margin: 0 auto;
+  padding: 8px 18px calc(80px + env(safe-area-inset-bottom));
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+}
+
+.home-logo {
+  text-align: center;
+  margin-top: 3%;
+  color: #fff;
+}
+
+.home-logo h1 {
+  margin: 0;
+  font-size: 46px;
+  letter-spacing: 6px;
+  font-weight: 900;
+  background: linear-gradient(180deg, #fff3cf, #f3c968);
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+  filter: drop-shadow(0 3px 0 rgba(0, 0, 0, 0.35)) drop-shadow(0 8px 18px rgba(0, 0, 0, 0.4));
+}
+
+.home-logo p {
+  margin: 6px 0 0;
+  font-size: 13px;
+  color: rgba(255, 235, 200, 0.85);
+  letter-spacing: 2px;
+}
+
+.home-actions {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.home-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 2px;
+  width: 100%;
+  min-height: 64px;
+  border-radius: 999px;
+  border: 1px solid rgba(255, 255, 255, 0.35);
+  background: linear-gradient(180deg, #a03a30, #7c2620);
+  color: #ffe9c4;
+  font-size: 20px;
+  font-weight: 900;
+  letter-spacing: 4px;
+  box-shadow: 0 6px 0 rgba(0, 0, 0, 0.28), 0 10px 20px rgba(0, 0, 0, 0.25);
+}
+
+.home-btn small {
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 1px;
+  color: rgba(255, 233, 196, 0.75);
+}
+
+.home-btn.primary {
+  min-height: 86px;
+  font-size: 27px;
+  background: linear-gradient(180deg, #ffd977, #e9a63a 55%, #d18a1f);
+  color: #5d2c05;
+  border-color: rgba(255, 255, 255, 0.6);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+}
+
+.home-btn:active {
+  transform: translateY(3px);
+  box-shadow: 0 3px 0 rgba(0, 0, 0, 0.28), 0 6px 12px rgba(0, 0, 0, 0.2);
+}
+
+.home-btn-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+
+.home-room {
+  width: 100%;
+  max-width: 420px;
+}
+
+.home-nav {
+  position: fixed;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+  background: rgba(42, 8, 8, 0.92);
+  border-top: 1px solid rgba(255, 255, 255, 0.14);
+  padding: 8px 10px calc(8px + env(safe-area-inset-bottom));
+  backdrop-filter: blur(6px);
+  z-index: 20;
+}
+
+.home-nav button {
+  min-height: 44px;
+  background: transparent;
+  color: rgba(255, 236, 200, 0.7);
+  font-size: 15px;
+  font-weight: 700;
+  border-radius: 10px;
+}
+
+.home-nav button.on {
+  color: #ffd977;
+  background: rgba(255, 217, 119, 0.12);
+}
+
+@media (max-width: 520px) {
+  .home-logo h1 {
+    font-size: 38px;
+  }
+  .home-btn.primary {
+    min-height: 76px;
+    font-size: 24px;
+  }
+  .home-btn {
+    min-height: 56px;
+    font-size: 17px;
   }
 }
