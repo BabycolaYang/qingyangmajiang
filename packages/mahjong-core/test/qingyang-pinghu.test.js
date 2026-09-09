@@ -342,7 +342,7 @@ const qiXiaoDuiHand = [
   "zhong",
 ];
 
-// 四刻 + 将的对对胡（east 对子另计风箭附加）。
+// 四刻 + 将的对对胡（east 刻子另计风箭附加，east 对子不计）。
 const duiDuiHand = [
   "wan-1",
   "wan-1",
@@ -353,11 +353,11 @@ const duiDuiHand = [
   "tong-8",
   "tong-8",
   "tong-8",
-  "tiao-3",
-  "tiao-3",
-  "tiao-3",
   "east",
   "east",
+  "east",
+  "tiao-3",
+  "tiao-3",
 ];
 
 test("canQiXiaoDui pairs the laizi with a single and counts four of a kind as two pairs", () => {
@@ -399,7 +399,7 @@ test("resolves qi xiao dui as a standalone base type with its own head bonus", (
 });
 
 test("resolves dui dui hu and wind arrow bonuses", () => {
-  // 恩豆 2 + 对对胡 4 + 风箭（east 对子）1 = 7 子。
+  // 恩豆 2 + 对对胡 4 + 风箭（east 刻子）1 = 7 子。
   const detail = resolveWinDetail({ tiles: duiDuiHand, laiziTile: "zhong" });
   assert.equal(detail.baseType, WIN_TYPES.EN_DOU);
   assert.equal(detail.totalZi, 7);
@@ -419,6 +419,7 @@ test("resolves dui dui hu and wind arrow bonuses", () => {
 
 test("resolves quan qiu du diao with priority over dui dui hu", () => {
   // 全球独钓：只剩 2 张开牌（4 副露），独钓优先于对对胡，不叠加。
+  // east 对子不再计风箭附加（需 3 张一样才算）。
   const detail = resolveWinDetail({
     tiles: ["east", "east"],
     laiziTile: "zhong",
@@ -427,23 +428,29 @@ test("resolves quan qiu du diao with priority over dui dui hu", () => {
   assert.equal(detail.baseType, WIN_TYPES.EN_DOU);
   assert.deepEqual(
     detail.bonuses.map((bonus) => bonus.key),
-    ["quanQiuDuDiao", "windArrow"],
+    ["quanQiuDuDiao"],
   );
-  assert.equal(detail.totalZi, 2 + 6 + 1);
+  assert.equal(detail.totalZi, 2 + 6);
 });
 
-test("counts wind arrow bonuses from hand pairs and melds", () => {
-  assert.equal(countWindArrowBonus(["east", "east", "fa"], [], "zhong"), 1);
+test("counts wind arrow bonuses from hand triplets and melds", () => {
+  // 对子不计：2 张一样不算风箭附加
+  assert.equal(countWindArrowBonus(["east", "east", "fa"], [], "zhong"), 0);
+  // 3 张一样（刻子）计 1 子；4 张同样只算 1 组
+  assert.equal(countWindArrowBonus(["east", "east", "east", "fa"], [], "zhong"), 1);
+  assert.equal(countWindArrowBonus(["east", "east", "east", "east"], [], "zhong"), 1);
+  // 手牌刻子与副露碰杠可以叠加
   assert.equal(
-    countWindArrowBonus(["east", "east", "fa"], [{ type: "peng", tile: "fa", tiles: ["fa", "fa", "fa"] }], "zhong"),
+    countWindArrowBonus(["east", "east", "east"], [{ type: "peng", tile: "fa", tiles: ["fa", "fa", "fa"] }], "zhong"),
     2,
   );
-  // 赖子搭配的碰组不算
+  // 赖子搭配的碰组不算；手牌对子也不计
   assert.equal(
     countWindArrowBonus(["east", "east"], [{ type: "peng", tile: "fa", tiles: ["fa", "fa", "zhong"] }], "zhong"),
-    1,
+    0,
   );
-  // 赖子本身不计
+  // 赖子本身不计：赖子牌（zhong）凑成的 3 张视为赖子搭配，不算风箭
+  assert.equal(countWindArrowBonus(["east", "zhong", "zhong", "zhong", "fa"], [], "zhong"), 0);
   assert.equal(countWindArrowBonus(["east", "zhong", "fa"], [], "zhong"), 0);
 });
 

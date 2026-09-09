@@ -49,7 +49,7 @@ export const HEAD_BONUS_ZI = {
   QI_XIAO_DUI: 2,
 };
 
-// 风箭牌范围（东南西北中发白）：手牌对子及以上或副露碰/杠，每个 +1 子
+// 风箭牌范围（东南西北中发白）：手牌 3 张一样（刻子）及以上或副露碰/杠，每个 +1 子
 export const WIND_ARROW_TILES = [
   "east",
   "south",
@@ -90,7 +90,7 @@ export const DEFAULT_RULE_CONFIG = {
     zhiGang: true, // 直杠 +10 子
     duiDuiHu: true, // 对对胡 +4 子
     quanQiuDuDiao: true, // 全球独钓 +6 子
-    windArrowBonus: true, // 风箭对子/杠 每个 +1 子
+    windArrowBonus: true, // 风箭刻子/杠 每个 +1 子
     headBonus: true, // 头家加成：头家多付 1 子、跑风 2 子
     streakPenalty: true, // 连打惩罚：4 家连打同一张牌
   },
@@ -107,7 +107,7 @@ export const RULE_LABELS = {
   zhiGang: "直杠（杠时胡、跑风 +10子）",
   duiDuiHu: "对对胡（没有顺子 +4子）",
   quanQiuDuDiao: "全球独钓（只剩2张开牌 +6子）",
-  windArrowBonus: "风箭附加（风箭对子/杠每个 +1子）",
+  windArrowBonus: "风箭附加（风箭刻子/杠每个 +1子）",
   headBonus: "头家加成（头家多付1子、跑风2子）",
   streakPenalty: "连打惩罚（4家连打同一张牌）",
 };
@@ -316,8 +316,8 @@ export function isDuiDuiHu(tiles, laiziTile) {
 }
 
 // ==================== 风箭附加 ====================
-// 手牌里真实风箭张数 >= 2（对子及以上）每门 +1；副露区每个风箭碰/杠 +1。
-// 赖子不计入（赖子搭配成型的风箭不算，例如赖子碰出的风刻）。
+// 手牌里真实风箭张数 >= 3（3 张一样才算一组）每门 +1；副露区每个风箭碰/杠 +1。
+// 对子（2 张）不计子；赖子不计入（赖子搭配成型的风箭不算，例如赖子碰出的风刻）。
 export function countWindArrowBonus(tiles, melds = [], laiziTile) {
   assertTile(laiziTile);
   let count = 0;
@@ -325,7 +325,7 @@ export function countWindArrowBonus(tiles, melds = [], laiziTile) {
   const counts = countTiles(tiles);
   counts[TILE_INDEX.get(laiziTile)] = 0;
   for (const tile of WIND_ARROW_TILES) {
-    if (counts[TILE_INDEX.get(tile)] >= 2) {
+    if (counts[TILE_INDEX.get(tile)] >= 3) {
       count += 1;
     }
   }
