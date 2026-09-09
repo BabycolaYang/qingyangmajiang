@@ -81,6 +81,37 @@ test("run-feng tier follows idle laizi count on the pre-draw hand", () => {
   assert.equal(detail.totalZi, 2);
 });
 
+test("run-feng tier falls back to 1 pao when idle count is 0 with laizi present", () => {
+  const laizi = "zhong";
+  // 13 张：123万、123万、456条、789筒 + 1 赖（显式传 idle=0 模拟赖子全被搭子用掉）
+  const preDraw = [
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "tiao-4",
+    "tiao-5",
+    "tiao-6",
+    "tong-7",
+    "tong-8",
+    "tong-9",
+    laizi,
+  ];
+  assert.equal(preDraw.length, 13);
+  const drawn = "wan-2"; // 摸成 22 将 + 123 + 12赖 + 123
+  const detail = resolveWinDetail({
+    tiles: [...preDraw, drawn],
+    laiziTile: laizi,
+    wasRunFengBeforeDraw: true,
+    idleLaiziCount: 0,
+    ruleConfig: normalizeRuleConfig({}),
+  });
+  assert.equal(detail.baseType, WIN_TYPES.PAO_FENG_1);
+  assert.equal(detail.totalZi, 2);
+});
+
 test("creates a 136-tile wall without flowers", () => {
   const wall = createWall();
   assert.equal(wall.length, 136);

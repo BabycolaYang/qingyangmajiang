@@ -838,13 +838,15 @@ function countWinningDraws(waitingTiles, laiziTile, options = {}) {
   if (canRunFeng(waitingTiles, laiziTile, { exposedMeldCount, mustLackOneSuit })) {
     // 全听手摸任何牌都胡，但按跑风分类结算（跑数按闲赖子数）：相应基础型全部关闭时，
     // 全听手反而一手不可胡（0 进张），避免机器人在受限房间里高估全听型。
+    // 恩豆只看无赖子；有赖子时至少按 1 跑档（0 闲=赖子全被搭子用掉）。
+    const laiziCount = countTile(waitingTiles, laiziTile);
     const idleCount = countIdleLaizi(waitingTiles, laiziTile);
     const runFengEnabled =
-      idleCount === 0
-        ? config.rules.enDou || config.rules.paoFeng1
-        : idleCount === 1
-          ? config.rules.paoFeng1 || config.rules.paoFeng2
-          : config.rules.paoFeng2;
+      laiziCount === 0
+        ? config.rules.enDou
+        : idleCount >= 2
+          ? config.rules.paoFeng2
+          : config.rules.paoFeng1 || config.rules.paoFeng2;
     return runFengEnabled ? TILE_TYPES.length : 0;
   }
 

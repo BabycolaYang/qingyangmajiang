@@ -574,33 +574,30 @@ export function resolveWinDetail(context) {
     });
   }
 
-  // ② 基础型：跑风按摸牌前手牌里多出来的（闲）赖子数定跑——
-  //    0 闲=恩豆、1 闲=1 跑、≥2 闲=2 跑；非跑风为恩豆/小开；
+  // ② 基础型：恩豆=无赖子开牌（与是否跑风无关）；非跑风 1 赖=小开；
+  //    跑数只对跑风：按摸牌前手牌里多出来的（闲）赖子数定——
+  //    1 闲=1 跑、≥2 闲=2 跑（赖子被搭子全部用掉时按 1 跑档）；
   //    对应开关关闭时该牌型不可胡。
   let baseType = null;
-  if (isRunFeng) {
+  if (laiziCount === 0) {
+    if (config.rules.enDou) {
+      baseType = WIN_TYPES.EN_DOU;
+    }
+  } else if (!isRunFeng) {
+    if (laiziCount === 1 && config.rules.xiaoKai) {
+      baseType = WIN_TYPES.XIAO_KAI;
+    }
+  } else {
     const idleCount =
       Number.isInteger(idleLaiziCount) && idleLaiziCount >= 0
         ? idleLaiziCount
         : countIdleLaizi(tiles, laiziTile);
-    if (idleCount === 0) {
-      if (config.rules.enDou) {
-        baseType = WIN_TYPES.EN_DOU;
+    if (idleCount >= 2) {
+      if (config.rules.paoFeng2) {
+        baseType = WIN_TYPES.PAO_FENG_2;
       }
-    } else if (idleCount === 1) {
-      if (config.rules.paoFeng1) {
-        baseType = WIN_TYPES.PAO_FENG_1;
-      }
-    } else if (config.rules.paoFeng2) {
-      baseType = WIN_TYPES.PAO_FENG_2;
-    }
-  } else if (laiziCount === 0) {
-    if (config.rules.enDou) {
-      baseType = WIN_TYPES.EN_DOU;
-    }
-  } else if (laiziCount === 1) {
-    if (config.rules.xiaoKai) {
-      baseType = WIN_TYPES.XIAO_KAI;
+    } else if (config.rules.paoFeng1) {
+      baseType = WIN_TYPES.PAO_FENG_1;
     }
   }
 
