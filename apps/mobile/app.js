@@ -2788,6 +2788,7 @@ function onlineCreateRoom() {
       nickname: state.nickname,
       mustLackOneSuit: state.mustLackOneSuit,
       ruleConfig: state.ruleConfig,
+      devMode: state.devMode,
     });
   });
 }
