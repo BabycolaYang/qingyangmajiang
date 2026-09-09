@@ -7,6 +7,7 @@ import {
   canPingHu,
   canQiXiaoDui,
   canRunFeng,
+  countIdleLaizi,
   countWindArrowBonus,
   createWall,
   hasLackOneSuit,
@@ -18,6 +19,67 @@ import {
   resolveWinType,
   scoreWin,
 } from "../src/index.js";
+
+// 构造手牌：真实牌（如 "wan-1,wan-2"）+ N 个赖子
+function handWithLaizi(realTiles, laiziCount, laiziTile = "zhong") {
+  return [
+    ...realTiles.split(",").map((tile) => tile.trim()),
+    ...Array.from({ length: laiziCount }, () => laiziTile),
+  ];
+}
+
+test("counts idle laizi: run partners absorb one laizi each, pairs and singles do not", () => {
+  const laizi = "zhong";
+  // 用户口径验证例：12357+2 赖 → 57 搭子用掉 1 个赖子 → 1 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-1,wan-2,wan-3,wan-5,wan-7", 2), laizi), 1);
+  // 12345+2 赖 → 45 搭子用掉 1 个 → 1 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-1,wan-2,wan-3,wan-4,wan-5", 2), laizi), 1);
+  // 12355+2 赖 → 对子不用赖子 → 2 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-1,wan-2,wan-3,wan-5,wan-5", 2), laizi), 2);
+  // 1235+3 赖 → 无搭子 → 3 闲（结算分层封顶为 2 跑）
+  assert.equal(countIdleLaizi(handWithLaizi("wan-1,wan-2,wan-3,wan-5", 3), laizi), 3);
+  // 78+2 赖 → 搭子用掉 1 个 → 1 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-7,wan-8", 2), laizi), 1);
+  // 789 完整顺子 → 2 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-7,wan-8,wan-9", 2), laizi), 2);
+  // 55 对子不吸收赖子
+  assert.equal(countIdleLaizi(handWithLaizi("wan-5,wan-5", 2), laizi), 2);
+  // 111,23+1 赖 → 23+赖连成顺子 → 0 闲
+  assert.equal(countIdleLaizi(handWithLaizi("wan-1,wan-1,wan-1,wan-2,wan-3", 1), laizi), 0);
+  // 不拆完整顺子去吸收：12357 优先组 123，再算 57 搭子
+  assert.equal(countIdleLaizi(handWithLaizi("tiao-1,tiao-2,tiao-3,tiao-5,tiao-7", 2), laizi), 1);
+});
+
+test("run-feng tier follows idle laizi count on the pre-draw hand", () => {
+  const laizi = "zhong";
+  // 摸牌前 13 张：123万、234条、567筒、57万+2 赖（57 搭子用掉 1 个赖子 → 1 闲）
+  const preDraw = [
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+    "tong-5",
+    "tong-6",
+    "tong-7",
+    "wan-5",
+    "wan-7",
+    laizi,
+    laizi,
+  ];
+  const drawn = "wan-6"; // 摸成 567万 开牌
+  const tiles = [...preDraw, drawn];
+  const detail = resolveWinDetail({
+    tiles,
+    laiziTile: laizi,
+    wasRunFengBeforeDraw: true,
+    idleLaiziCount: countIdleLaizi(preDraw, laizi),
+    ruleConfig: normalizeRuleConfig({}),
+  });
+  assert.equal(detail.baseType, WIN_TYPES.PAO_FENG_1);
+  assert.equal(detail.totalZi, 2);
+});
 
 test("creates a 136-tile wall without flowers", () => {
   const wall = createWall();

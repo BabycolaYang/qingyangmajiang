@@ -13,6 +13,7 @@ import {
 } from "./tiles.js";
 import {
   canRunFeng,
+  countIdleLaizi,
   normalizeRuleConfig,
   resolveWinDetail,
   resolveWinType,
@@ -835,13 +836,13 @@ function countWinningDraws(waitingTiles, laiziTile, options = {}) {
   const { exposedMeldCount = 0, mustLackOneSuit = false, ruleConfig } = options;
   const config = normalizeRuleConfig(ruleConfig);
   if (canRunFeng(waitingTiles, laiziTile, { exposedMeldCount, mustLackOneSuit })) {
-    // 全听手摸任何牌都胡，但按跑风分类结算：相应基础型全部关闭时，
+    // 全听手摸任何牌都胡，但按跑风分类结算（跑数按闲赖子数）：相应基础型全部关闭时，
     // 全听手反而一手不可胡（0 进张），避免机器人在受限房间里高估全听型。
-    const laiziCount = countTile(waitingTiles, laiziTile);
+    const idleCount = countIdleLaizi(waitingTiles, laiziTile);
     const runFengEnabled =
-      laiziCount === 0
+      idleCount === 0
         ? config.rules.enDou || config.rules.paoFeng1
-        : laiziCount === 1
+        : idleCount === 1
           ? config.rules.paoFeng1 || config.rules.paoFeng2
           : config.rules.paoFeng2;
     return runFengEnabled ? TILE_TYPES.length : 0;
@@ -928,6 +929,11 @@ function scoreTileShape(tile, counts) {
 
 function buildAvailableWin(state, seat, extra) {
   const player = state.players[seat];
+  // 跑数按"摸牌前"的暗手牌算：14 张去掉刚摸的那张（自摸 13 张/杠后 10-12 张）。
+  const preDrawTiles = [...player.hand];
+  if (extra?.drawnTile) {
+    removeTiles(preDrawTiles, extra.drawnTile, 1);
+  }
   const detail = resolveWinDetail({
     tiles: player.hand,
     laiziTile: state.laiziTile,
@@ -935,6 +941,7 @@ function buildAvailableWin(state, seat, extra) {
     exposedMeldCount: player.melds.length,
     melds: player.melds,
     ruleConfig: state.ruleConfig,
+    idleLaiziCount: countIdleLaizi(preDrawTiles, state.laiziTile),
     ...extra,
   });
 

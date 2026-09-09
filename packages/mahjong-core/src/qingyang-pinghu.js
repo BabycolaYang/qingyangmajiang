@@ -16,8 +16,8 @@ import {
 export const WIN_TYPES = {
   EN_DOU: "enDou", // 恩豆：没有赖子开牌
   XIAO_KAI: "xiaoKai", // 小开：1 个赖子开牌（非跑风）
-  PAO_FENG_1: "paoFeng1", // 1 跑：跑风且 1 个赖子
-  PAO_FENG_2: "paoFeng2", // 2 跑：跑风且 2 个及以上赖子
+  PAO_FENG_1: "paoFeng1", // 1 跑：跑风且 1 个闲赖子
+  PAO_FENG_2: "paoFeng2", // 2 跑：跑风且 2 个及以上闲赖子
   QI_XIAO_DUI: "qiXiaoDui", // 七小对（单独算法，不叠加对对胡等牌型附加）
   // 旧版标识，兼容保留（仅用于展示兜底与旧用例映射）
   PING_HU: "pingHu",
@@ -100,8 +100,8 @@ export const RULE_LABELS = {
   multiplier: "倍率",
   enDou: "恩豆（无赖子开牌 +2子）",
   xiaoKai: "小开（1个赖子开牌 +1子）",
-  paoFeng1: "1跑（跑风1个赖子 +2子）",
-  paoFeng2: "2跑（跑风2个赖子 +3子）",
+  paoFeng1: "1跑（跑风1个闲赖子 +2子）",
+  paoFeng2: "2跑（跑风2个及以上闲赖子 +3子）",
   qiXiaoDui: "七小对（每家10子/头家12子）",
   wanGang: "弯杠（杠时胡、非跑风 +4子）",
   zhiGang: "直杠（杠时胡、跑风 +10子）",
@@ -199,6 +199,103 @@ export function canRunFeng(waitingTiles, laiziTile, options = {}) {
       runFeng: true,
     });
   });
+}
+
+// ==================== 闲赖子计数 ====================
+// 跑数口径：按摸牌前手牌里"多出来的（闲）赖子"个数定跑。
+// 赖子只有在"连成顺子"时才算用掉：真实牌先尽量多地组成顺子/刻子，
+// 剩余牌里的顺子搭子（如 5,7 / 4,6 / 1,2）每个可用 1 个赖子连成顺子；
+// 对子、孤张、纯赖子组都不算用掉。两步取优：先最大化真实面子数，
+// 再在同等面子数下最小化剩余闲赖子（避免把 123 拆成 12+赖 多算用掉）。
+export function countIdleLaizi(waitingTiles, laiziTile) {
+  assertTile(laiziTile);
+  const counts = countTiles(waitingTiles);
+  const laiziIndex = TILE_INDEX.get(laiziTile);
+  const laiziTotal = counts[laiziIndex] ?? 0;
+  counts[laiziIndex] = 0;
+  const memo = new Map();
+
+  // 在最小下标处递归；L 为剩余赖子数。
+  // 返回 { melds, idle }：melds 尽量大（真实顺子/刻子数），其次 idle 尽量小。
+  const solve = (counts, L, memoLocal) => {
+    const key = `${counts.join(",")}|${L}`;
+    if (memoLocal.has(key)) {
+      return memoLocal.get(key);
+    }
+
+    const first = counts.findIndex((count) => count > 0);
+    if (first === -1) {
+      return { melds: 0, idle: L };
+    }
+
+    let best = null;
+    const consider = (melds, idle) => {
+      if (
+        best === null ||
+        melds > best.melds ||
+        (melds === best.melds && idle < best.idle)
+      ) {
+        best = { melds, idle };
+      }
+    };
+    const solveNext = (nc, nl) => solve(nc, nl, memoLocal);
+
+    const suit = Math.floor(first / 9);
+    const rank = (first % 9) + 1;
+    // 顺子搭子 + 1 赖（1,2 / 1,3 连成顺子，用掉 1 个赖子，不构成面子）
+    if (suit < 3 && L >= 1) {
+      for (const offset of [1, 2]) {
+        const partner = first + offset;
+        if (rank + offset <= 9 && counts[partner] > 0) {
+          const nc = [...counts];
+          nc[first] -= 1;
+          nc[partner] -= 1;
+          const sub = solveNext(nc, L - 1);
+          consider(sub.melds, sub.idle);
+        }
+      }
+    }
+    // 顺子（三张真牌，面子）
+    if (
+      suit < 3 &&
+      rank <= 7 &&
+      counts[first + 1] > 0 &&
+      counts[first + 2] > 0
+    ) {
+      const nc = [...counts];
+      nc[first] -= 1;
+      nc[first + 1] -= 1;
+      nc[first + 2] -= 1;
+      const sub = solveNext(nc, L);
+      consider(sub.melds + 1, sub.idle);
+    }
+    // 刻子（三张真牌，面子）
+    if (counts[first] >= 3) {
+      const nc = [...counts];
+      nc[first] -= 3;
+      const sub = solveNext(nc, L);
+      consider(sub.melds + 1, sub.idle);
+    }
+    // 对子（不算用掉赖子）
+    if (counts[first] >= 2) {
+      const nc = [...counts];
+      nc[first] -= 2;
+      const sub = solveNext(nc, L);
+      consider(sub.melds, sub.idle);
+    }
+    // 孤张（不算用掉赖子）
+    {
+      const nc = [...counts];
+      nc[first] -= 1;
+      const sub = solveNext(nc, L);
+      consider(sub.melds, sub.idle);
+    }
+
+    memoLocal.set(key, best);
+    return best;
+  };
+
+  return solve(counts, laiziTotal, memo).idle;
 }
 
 // ==================== 七小对 ====================
@@ -450,6 +547,7 @@ export function resolveWinDetail(context) {
     isGangDraw = false,
     wasRunFengBeforeGang = false,
     wasRunFengBeforeDraw = false,
+    idleLaiziCount,
     melds = [],
     ruleConfig,
   } = context;
@@ -476,15 +574,20 @@ export function resolveWinDetail(context) {
     });
   }
 
-  // ② 基础型：跑风按赖子数分 1 跑/2 跑（0 赖子归恩豆），
-  //    非跑风为恩豆/小开；对应开关关闭时该牌型不可胡。
+  // ② 基础型：跑风按摸牌前手牌里多出来的（闲）赖子数定跑——
+  //    0 闲=恩豆、1 闲=1 跑、≥2 闲=2 跑；非跑风为恩豆/小开；
+  //    对应开关关闭时该牌型不可胡。
   let baseType = null;
   if (isRunFeng) {
-    if (laiziCount === 0) {
+    const idleCount =
+      Number.isInteger(idleLaiziCount) && idleLaiziCount >= 0
+        ? idleLaiziCount
+        : countIdleLaizi(tiles, laiziTile);
+    if (idleCount === 0) {
       if (config.rules.enDou) {
         baseType = WIN_TYPES.EN_DOU;
       }
-    } else if (laiziCount === 1) {
+    } else if (idleCount === 1) {
       if (config.rules.paoFeng1) {
         baseType = WIN_TYPES.PAO_FENG_1;
       }
