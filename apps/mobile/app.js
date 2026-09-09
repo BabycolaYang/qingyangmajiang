@@ -16,6 +16,7 @@ import {
   mergeDrawnTile,
   mingGangDiscard,
   normalizeRuleConfig,
+  parseTilesText,
   pengDiscard,
   rollDice,
   skipReactions,
@@ -243,6 +244,15 @@ function normalizeState(nextState) {
     room: initialOnline ? null : nextState.room ?? null,
     game: initialOnline ? null : nextState.game ?? null,
     mustLackOneSuit: nextState.mustLackOneSuit ?? false,
+    // 开发者模式开关（草稿）：单机随房间快照，联机随创建消息发给服务器。
+    devMode: nextState.devMode ?? false,
+    // 发牌设置弹窗：文本草稿（4 座手牌 + 摸牌顺序）与错误提示。
+    dev: {
+      panelOpen: false,
+      error: "",
+      hands: nextState.dev?.hands ?? ["", "", "", ""],
+      wallTail: nextState.dev?.wallTail ?? "",
+    },
     // 房间规则草稿（倍率 + 各规则开关）：创建房间时快照进 state.room，
     // 联机创建/快速加入时随消息发给服务器，开出的房间即按此规则进行。
     ruleConfig: normalizeRuleConfig(nextState.ruleConfig),
@@ -282,6 +292,8 @@ function saveState() {
     // 账号凭据不入 localStorage（避免 tab 间串扰与 token 死副本），只保留面板模式偏好。
     auth: { mode: state.auth?.mode ?? "login" },
     game: state.game,
+    // 发牌设置草稿保留（便于反复调试），但弹窗开合/报错是临时态不落盘。
+    dev: { ...state.dev, panelOpen: false, error: "" },
   }));
 }
 
@@ -300,7 +312,8 @@ function render() {
     return;
   }
 
-  if (state.view === "table" && state.game) {
+  // 发牌设置弹窗打开时走完整重绘，保证浮层随渲染输出挂载。
+  if (state.view === "table" && state.game && !state.dev.panelOpen) {
     if (state.game.status !== "ended" && pixiTable && pixiRoot && app.querySelector("#table-canvas")) {
       // 下一局后走的是刷新路径（不重建 DOM），这里要主动清掉上一局的结算浮层。
       app.querySelector(".settlement")?.remove();
@@ -404,6 +417,7 @@ function renderLobby() {
         <div class="setting-row"><span>缺一门</span><strong>${room.mustLackOneSuit ? "开" : "关"}</strong></div>
         <div class="actions">
           <button class="gold" data-action="start">开局</button>
+          ${room.devMode ? `<button class="secondary" data-action="open-dev-setup">发牌设置</button>` : ""}
           <button class="secondary" data-action="leave">离开</button>
         </div>
       </div>
@@ -485,6 +499,7 @@ function renderLobby() {
 
       <main class="home-screen">
         ${state.auth?.panelOpen ? renderAuthPanel() : ""}
+        ${state.dev.panelOpen ? renderDevSetupPanel() : ""}
         <div class="home-logo">
           <h1>青阳平胡</h1>
           <p>血战到底 · 缺一门 · 平胡</p>
@@ -529,6 +544,10 @@ function renderRoomConfigPanel(isOnline) {
       <div class="setting-row"><span>缺一门（打缺）</span>
         <button class="toggle ${state.mustLackOneSuit ? "on" : ""}" data-action="toggle-lack" aria-label="缺一门"><span></span></button>
       </div>
+      <div class="setting-row"><span>开发者模式（指定牌型）</span>
+        <button class="toggle ${state.devMode ? "on" : ""}" data-action="toggle-devmode" aria-label="开发者模式"><span></span></button>
+      </div>
+      ${state.devMode ? `<p class="status-text">已开启：建房后点「发牌设置」可指定各座手牌与摸牌顺序，便于测试罕见牌型。</p>` : ""}
       <div class="rule-list">${ruleRows}</div>
       <div style="height:12px"></div>
       <div class="actions">
@@ -551,6 +570,7 @@ function renderOnlineRoomPanel(room) {
     <div class="setting-row"><span>缺一门</span><strong>${room.mustLackOneSuit ? "开" : "关"}</strong></div>
     <div class="actions">
       <button class="secondary" data-action="copy-invite">复制邀请</button>
+      ${room.isOwner && room.devMode ? `<button class="secondary" data-action="open-dev-setup">发牌设置${room.devSetupActive ? " · 已配置" : ""}</button>` : ""}
       ${room.isOwner ? `<button class="gold" data-action="online-start">开局</button>` : ""}
       ${room.isOwner ? `<button class="secondary" data-action="online-dissolve">解散房间</button>` : ""}
       <button class="secondary" data-action="online-leave">离开</button>
@@ -612,6 +632,7 @@ function renderTable() {
       <header class="table-head">
         <button class="secondary" data-action="back">大厅</button>
         <h1>房号 ${state.room.code}</h1>
+        ${state.room.devMode ? `<button class="secondary" data-action="open-dev-setup">发牌设置</button>` : ""}
         <div class="badge-row">
           ${badgeRowHtml(game)}
         </div>
@@ -619,6 +640,7 @@ function renderTable() {
       <section class="board">
         <canvas id="table-canvas" aria-label="PixiJS 麻将牌桌"></canvas>
         ${game.status === "ended" ? renderSettlement() : ""}
+        ${state.dev.panelOpen ? renderDevSetupPanel() : ""}
       </section>
       <footer class="controls">
         ${renderControls()}
@@ -2243,6 +2265,23 @@ function bindLobby() {
       if (action === "toggle-lack") {
         state.mustLackOneSuit = !state.mustLackOneSuit;
       }
+      if (action === "toggle-devmode") {
+        state.devMode = !state.devMode;
+      }
+      if (action === "open-dev-setup") {
+        state.dev.panelOpen = true;
+        state.dev.error = "";
+      }
+      if (action === "dev-close") {
+        collectDevDrafts();
+        state.dev.panelOpen = false;
+      }
+      if (action === "dev-save") {
+        saveDevSetup();
+      }
+      if (action === "dev-clear") {
+        clearDevSetup();
+      }
       if (action === "show-config") {
         state.lobbyTab = "config";
       }
@@ -2386,6 +2425,26 @@ function bindTable() {
           return;
         }
 
+        // 开发者模式：发牌设置弹窗（单机联机通用；联机需房主，服务器会校验）。
+        if (action === "open-dev-setup") {
+          state.dev.panelOpen = true;
+          state.dev.error = "";
+        }
+        if (action === "dev-close") {
+          collectDevDrafts();
+          state.dev.panelOpen = false;
+        }
+        if (action === "dev-save") {
+          saveDevSetup();
+        }
+        if (action === "dev-redeal") {
+          saveDevSetup({ redeal: true });
+          return;
+        }
+        if (action === "dev-clear") {
+          clearDevSetup();
+        }
+
         if (isOnlineMode()) {
           if (action === "discard" && canHumanDiscard()) {
             sendOnline("action", {
@@ -2454,6 +2513,126 @@ function bindTable() {
   });
 }
 
+// ---- 开发者模式 · 发牌设置 ----
+// 弹窗按座位填手牌、按顺序填摸牌（wallTail 最前最先摸到）。
+// 联机仅房主可保存：配置存服务器，对此后每局生效；单机保存草稿，开局/重发时应用。
+
+function renderDevSetupPanel() {
+  const online = isOnlineMode();
+  const mySeat = online ? state.online.room?.seat ?? 0 : 0;
+  const error = state.dev.error || (online ? state.online.error : "");
+  const handFields = [0, 1, 2, 3]
+    .map((seat) => {
+      const nameSuffix = !online && state.game
+        ? `（${state.game.players[seat].name}）`
+        : seat === mySeat
+        ? "（我）"
+        : "";
+      return `
+        <div class="dev-field">
+          <label for="dev-hand-${seat}">座位 ${seat + 1} 手牌${nameSuffix} · 留空随机</label>
+          <textarea id="dev-hand-${seat}" placeholder="例：wan1 5条 东x3 123筒">${escapeHtml(state.dev.hands[seat] ?? "")}</textarea>
+        </div>
+      `;
+    })
+    .join("");
+
+  return `
+    <div class="settlement dev-panel">
+      <h3>发牌设置（开发者）</h3>
+      ${handFields}
+      <div class="dev-field">
+        <label for="dev-wall-tail">摸牌顺序 · 最前面最先被摸到，留空随机</label>
+        <textarea id="dev-wall-tail" placeholder="例：tong1 2筒 中x2">${escapeHtml(state.dev.wallTail ?? "")}</textarea>
+      </div>
+      <p class="dev-hint">写法：万1 / wan1 / 1万 均可；风箭牌直接连写"东南西北中发白"；x2/x3 表示重复张数。</p>
+      <p class="dev-hint">${online
+        ? "联机房仅房主可保存，配置对此后每局生效（点开局 / 下一局即按此发牌）。"
+        : "单机保存后点「开局」生效；对局中可点「保存并重发」立即按新配置重发本局。"}</p>
+      ${error ? `<p class="status-text error">${escapeHtml(error)}</p>` : ""}
+      <div class="actions">
+        <button class="gold" data-action="dev-save">保存</button>
+        ${!online && state.game ? `<button class="secondary" data-action="dev-redeal">保存并重发</button>` : ""}
+        <button class="secondary" data-action="dev-clear">清除配置</button>
+        <button class="secondary" data-action="dev-close">关闭</button>
+      </div>
+    </div>
+  `;
+}
+
+// 弹窗里的文本回收到草稿（关闭/保存前调用，避免丢用户输入）。
+function collectDevDrafts() {
+  state.dev.hands = [0, 1, 2, 3].map((seat) => app.querySelector(`#dev-hand-${seat}`)?.value ?? state.dev.hands[seat] ?? "");
+  state.dev.wallTail = app.querySelector("#dev-wall-tail")?.value ?? state.dev.wallTail ?? "";
+}
+
+// 草稿 → startRound 配置：全部为空返回 null（=随机发牌）；写法非法直接抛错。
+function buildDevPayload() {
+  const hands = state.dev.hands.map((text) => {
+    const trimmed = String(text ?? "").trim();
+    return trimmed ? parseTilesText(trimmed) : null;
+  });
+  const wallTailText = String(state.dev.wallTail ?? "").trim();
+  const wallTail = wallTailText ? parseTilesText(wallTailText) : [];
+  if (!hands.some(Boolean) && wallTail.length === 0) {
+    return null;
+  }
+  return { hands, wallTail };
+}
+
+// 保存：联机发给服务器（空配置=清除），单机存草稿；redeal=true 时按新配置重发本局。
+function saveDevSetup({ redeal = false } = {}) {
+  collectDevDrafts();
+  state.dev.error = "";
+  let payload = null;
+  try {
+    payload = buildDevPayload();
+  } catch (error) {
+    state.dev.error = error.message;
+    render();
+    return;
+  }
+
+  if (isOnlineMode()) {
+    sendOnline("devSetup", { payload: payload ?? {} });
+    state.dev.panelOpen = false;
+    render();
+    return;
+  }
+
+  if (!payload) {
+    // 空配置：清空草稿，回到随机发牌。
+    state.dev.hands = ["", "", "", ""];
+    state.dev.wallTail = "";
+  }
+  state.dev.panelOpen = false;
+  if (redeal && state.game) {
+    startGame();
+  }
+  render();
+}
+
+// 清除配置：草稿清空；联机同时通知服务器清掉房间配置。
+function clearDevSetup() {
+  state.dev.hands = ["", "", "", ""];
+  state.dev.wallTail = "";
+  state.dev.error = "";
+  if (isOnlineMode()) {
+    sendOnline("devSetup", { payload: {} });
+  }
+  state.dev.panelOpen = false;
+  render();
+}
+
+// 开局用：开发者模式开启时把草稿解析成 hands/wallTail 传给 startRound。
+function devRoundOptions() {
+  if (!state.devMode) {
+    return {};
+  }
+  const payload = buildDevPayload();
+  return payload ?? {};
+}
+
 function createRoom(code = randomRoomCode()) {
   const dealerDice = rollDice();
   state.room = {
@@ -2462,12 +2641,23 @@ function createRoom(code = randomRoomCode()) {
     currentRound: 1,
     mustLackOneSuit: state.mustLackOneSuit,
     ruleConfig: normalizeRuleConfig(state.ruleConfig),
+    devMode: state.devMode,
     dealerSeat: (dealerDice.total - 1) % 4,
     dealerDice,
   };
 }
 
 function startGame() {
+  // 开发者模式：草稿写法非法时把错误带回弹窗（而非开局崩溃）。
+  let devOptions = {};
+  try {
+    devOptions = devRoundOptions();
+  } catch (error) {
+    state.dev.error = error.message;
+    state.dev.panelOpen = true;
+    render();
+    return;
+  }
   const names = ["我", ...botNames];
   state.game = startRound({
     dealerSeat: state.room.dealerSeat,
@@ -2476,12 +2666,22 @@ function startGame() {
     beanBalances: [state.beans, 1000, 1000, 1000],
     mustLackOneSuit: state.room.mustLackOneSuit,
     ruleConfig: state.room.ruleConfig,
+    ...devOptions,
   });
   state.view = "table";
 }
 
 function nextRound() {
   const previousGame = state.game;
+  let devOptions = {};
+  try {
+    devOptions = devRoundOptions();
+  } catch (error) {
+    state.dev.error = error.message;
+    state.dev.panelOpen = true;
+    render();
+    return;
+  }
   const names = previousGame.players.map((player) => player.name);
   state.room.currentRound += 1;
   state.room.dealerSeat = previousGame.nextDealerSeat;
@@ -2492,6 +2692,7 @@ function nextRound() {
     beanBalances: previousGame.players.map((player) => player.beans),
     mustLackOneSuit: state.room.mustLackOneSuit,
     ruleConfig: state.room.ruleConfig,
+    ...devOptions,
   });
 }
 
@@ -2761,6 +2962,7 @@ function handleOnlineMessage(message) {
         currentRound: message.room.currentRound,
         mustLackOneSuit: message.room.mustLackOneSuit,
         ruleConfig: message.room.ruleConfig,
+        devMode: Boolean(message.room.devMode),
         online: true,
       };
       if (message.game?.status === "playing") {

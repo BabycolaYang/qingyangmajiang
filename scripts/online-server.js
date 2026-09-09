@@ -151,6 +151,7 @@ function handlePeerMessage(peer, message) {
       nickname: peer.user?.nickname ?? message.nickname,
       mustLackOneSuit: message.mustLackOneSuit,
       ruleConfig: message.ruleConfig,
+      devMode: message.devMode,
     });
     broadcastRoom(room.code);
     return;
@@ -191,6 +192,13 @@ function handlePeerMessage(peer, message) {
     broadcastRoom(room.code);
     scheduleAdvance(room.code);
     scheduleLaiziReveal(room.code, room.laiziRevealAt);
+    return;
+  }
+
+  // 开发者模式：房主保存/清除发牌配置后广播房间态（devSetupActive 变化驱动按钮文案）。
+  if (message.type === "devSetup") {
+    const room = manager.devSetup(peer.id, message.payload ?? {});
+    broadcastRoom(room.code);
     return;
   }
 

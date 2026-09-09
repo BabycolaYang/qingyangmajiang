@@ -39,7 +39,7 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
   const rooms = new Map();
   const clientIndex = new Map();
 
-  function createRoom({ clientId, nickname, mustLackOneSuit = false, ruleConfig = null }) {
+  function createRoom({ clientId, nickname, mustLackOneSuit = false, ruleConfig = null, devMode = false }) {
     leaveRoom(clientId);
 
     const code = createRoomCode(rooms);
@@ -49,6 +49,9 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
       ownerClientId: clientId,
       mustLackOneSuit,
       ruleConfig: normalizeRuleConfig(ruleConfig),
+      // 开发者模式：允许房主在开局前指定各座手牌与摸牌顺序（仅测试用）。
+      devMode: Boolean(devMode),
+      devSetup: null,
       rounds: 4,
       currentRound: 1,
       dealerSeat: (dealerDice.total - 1) % PLAYER_COUNT,
@@ -265,14 +268,20 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
       ? room.game.players.map((player) => player.beans)
       : room.seats.map((seat) => seat.beans);
 
-    room.game = startRound({
-      dealerSeat,
-      seed: `${room.code}-${room.currentRound}-${Date.now()}`,
-      playerNames,
-      beanBalances,
-      mustLackOneSuit: room.mustLackOneSuit,
-      ruleConfig: room.ruleConfig,
-    });
+    try {
+      room.game = startRound({
+        dealerSeat,
+        seed: `${room.code}-${room.currentRound}-${Date.now()}`,
+        playerNames,
+        beanBalances,
+        mustLackOneSuit: room.mustLackOneSuit,
+        ruleConfig: room.ruleConfig,
+        ...(room.devSetup ?? {}),
+      });
+    } catch (error) {
+      // 开发者模式下的非法配置（超出 4 张上限等）：把底层错误转成带错误码的业务失败。
+      throw fail("DEV_SETUP_INVALID", `发牌设置无效：${error.message}`);
+    }
     room.status = "playing";
     room.pendingReactions = new Set();
     room.passedReactions = new Set();
@@ -280,6 +289,34 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
     // 保密期：开局先隐藏赖子/指示牌（手牌中性序下发），到 laiziRevealAt 时刻补发广播公开，
     // 与客户端开局动画的翻牌阶段对齐，翻开瞬间即亮牌面。
     room.laiziRevealAt = Date.now() + LAIZI_REVEAL_DELAY_MS;
+    return room;
+  }
+
+  // 开发者模式：房主保存/清除开局发牌配置。payload 结构：
+  // { hands: [null | ["wan-1", ...]，按 4 个座位], wallTail: ["tong-1", ...] }
+  // wallTail 即接下来的摸牌顺序（前几张最先被摸到）。全部字段为空视为清除配置。
+  // 合法性（每张牌 ≤4 张等）在 startRound 时校验，非法则报 DEV_SETUP_INVALID。
+  function devSetup(clientId, payload = {}) {
+    const room = getClientRoom(clientId);
+    ensureOwner(room, clientId);
+    if (!room.devMode) {
+      throw fail("DEV_MODE_OFF", "该房间未开启开发者模式");
+    }
+
+    const rawHands = Array.isArray(payload.hands) ? payload.hands : [];
+    const hands = [0, 1, 2, 3].map((seat) => {
+      const hand = rawHands[seat];
+      if (!Array.isArray(hand) || hand.length === 0) return null;
+      return hand.map((tile) => String(tile));
+    });
+    const rawWallTail = Array.isArray(payload.wallTail) ? payload.wallTail : [];
+    const wallTail = rawWallTail.map((tile) => String(tile));
+
+    if (!hands.some((hand) => hand) && wallTail.length === 0) {
+      room.devSetup = null;
+    } else {
+      room.devSetup = { hands, wallTail };
+    }
     return room;
   }
 
@@ -497,6 +534,7 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
     reconnectByToken,
     dissolveRoom,
     startGame,
+    devSetup,
     handleAction,
     advanceRoomOnce,
     getRoomForClient,
@@ -586,6 +624,8 @@ function publicRoomState(room, clientId, seat) {
     currentRound: room.currentRound,
     mustLackOneSuit: room.mustLackOneSuit,
     ruleConfig: room.ruleConfig,
+    devMode: room.devMode,
+    devSetupActive: Boolean(room.devSetup),
     dealerSeat: toViewSeat(room.dealerSeat, seat),
     invitePath: `/apps/mobile/?online=1&room=${room.code}`,
     players: rotateArray(room.seats, seat).map((seatInfo, viewSeat) => ({

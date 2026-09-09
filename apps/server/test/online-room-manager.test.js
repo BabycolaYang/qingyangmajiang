@@ -357,3 +357,89 @@ test("server rejects actions with error codes for client-side branching", () => 
     (error) => error.code === "GAME_STARTED",
   );
 });
+
+test("dev mode rooms expose flags and guard devSetup by owner and mode", () => {
+  const manager = createOnlineRoomManager();
+  const plainRoom = manager.createRoom({ clientId: "a", nickname: "房主" });
+  assert.equal(plainRoom.devMode, false);
+  assert.equal(manager.roomStateForClient("a").room.devMode, false);
+  assert.equal(manager.roomStateForClient("a").room.devSetupActive, false);
+
+  // 未开启开发者模式：即使房主也会被拒。
+  assert.throws(
+    () => manager.devSetup("a", { wallTail: ["tong-1"] }),
+    (error) => error.code === "DEV_MODE_OFF",
+  );
+
+  const room = manager.createRoom({ clientId: "x", nickname: "开发房", devMode: true });
+  manager.joinRoom({ clientId: "y", nickname: "朋友", roomCode: room.code });
+  assert.equal(room.devMode, true);
+  assert.equal(manager.roomStateForClient("y").room.devMode, true);
+
+  // 非房主保存配置 → NOT_OWNER。
+  assert.throws(
+    () => manager.devSetup("y", { wallTail: ["tong-1"] }),
+    (error) => error.code === "NOT_OWNER",
+  );
+
+  // 房主保存后公共态带 devSetupActive，供按钮文案切换。
+  manager.devSetup("x", { wallTail: ["tong-1", "tong-2"] });
+  assert.equal(manager.roomStateForClient("y").room.devSetupActive, true);
+});
+
+test("owner dev setup deals specified hands and wall tail on startGame", () => {
+  const manager = createOnlineRoomManager();
+  const room = manager.createRoom({ clientId: "a", nickname: "房主", devMode: true });
+  manager.joinRoom({ clientId: "b", nickname: "朋友", roomCode: room.code });
+
+  // 每座指定 13 张（庄家第 14 张留随机，避免依赖随机庄家方位）。
+  const handSpecs = [
+    ["wan-1", "wan-1", "wan-1", "tiao-1", "tiao-1", "tiao-1", "tong-1", "tong-1", "tong-1", "zhong", "zhong", "zhong", "east"],
+    ["wan-9", "wan-9", "wan-9", "tiao-9", "tiao-9", "tiao-9", "tong-9", "tong-9", "tong-9", "fa", "fa", "fa", "north"],
+    null,
+    [],
+  ];
+  const wallTail = ["tong-2", "tong-3", "tong-4"];
+  manager.devSetup("a", { hands: handSpecs, wallTail });
+
+  manager.startGame("a");
+
+  // 指定手牌全部落在对应座位（庄家额外多 1 张随机牌）。
+  for (const seat of [0, 1]) {
+    const actual = [...room.game.players[seat].hand];
+    for (const tile of handSpecs[seat]) {
+      const index = actual.indexOf(tile);
+      assert.notEqual(index, -1, `座位 ${seat} 缺少指定牌 ${tile}`);
+      actual.splice(index, 1);
+    }
+  }
+  // 座位 2 传 null、座位 3 传空数组都视为随机发牌。
+  assert.equal(room.game.players[2].hand.length >= 13, true);
+  assert.equal(room.game.players[3].hand.length >= 13, true);
+
+  // wallTail 紧跟发牌后堆在牌墙最前：接下来的摸牌顺序与配置一致。
+  assert.deepEqual(room.game.wall.slice(0, wallTail.length), wallTail);
+});
+
+test("invalid dev setup surfaces DEV_SETUP_INVALID and empty payload clears it", () => {
+  const manager = createOnlineRoomManager();
+  const room = manager.createRoom({ clientId: "a", nickname: "房主", devMode: true });
+  manager.joinRoom({ clientId: "b", nickname: "朋友", roomCode: room.code });
+
+  // 同一张牌指定 5 张：保存时不校验，开局时报 DEV_SETUP_INVALID。
+  manager.devSetup("a", {
+    hands: [["wan-1", "wan-1", "wan-1", "wan-1", "wan-1"], null, null, null],
+  });
+  assert.throws(
+    () => manager.startGame("a"),
+    (error) => error.code === "DEV_SETUP_INVALID" && error.message.includes("超过了 4 张上限"),
+  );
+
+  // 空载荷清除配置：恢复随机发牌，正常开局。
+  manager.devSetup("a", {});
+  assert.equal(room.devSetup, null);
+  assert.equal(manager.roomStateForClient("a").room.devSetupActive, false);
+  manager.startGame("a");
+  assert.equal(room.game.status, "playing");
+  assert.deepEqual(room.game.wall.slice(0, 0), []);
+});

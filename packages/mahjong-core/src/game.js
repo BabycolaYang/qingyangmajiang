@@ -1,6 +1,8 @@
 import {
   SUITS,
+  TILE_INDEX,
   TILE_TYPES,
+  assertTile,
   countTile,
   countTiles,
   createWall,
@@ -100,6 +102,28 @@ export function drawIndicatorFromBack(wall, diceTotal) {
   return tile;
 }
 
+// 开发者模式工具：从 136 张总牌池中扣减指定牌（每张牌全池最多 4 张）。
+function consumeTilesFromPool(poolCounts, tiles, label) {
+  for (const tile of tiles) {
+    assertTile(tile);
+    const index = TILE_INDEX.get(tile);
+    if (poolCounts[index] <= 0) {
+      throw new Error(`${label} 里 ${tile} 超过了 4 张上限`);
+    }
+    poolCounts[index] -= 1;
+  }
+}
+
+function tilesFromPool(poolCounts) {
+  const tiles = [];
+  poolCounts.forEach((count, index) => {
+    for (let i = 0; i < count; i += 1) {
+      tiles.push(TILE_TYPES[index]);
+    }
+  });
+  return tiles;
+}
+
 export function startRound(options = {}) {
   const {
     dealerSeat = 0,
@@ -108,10 +132,51 @@ export function startRound(options = {}) {
     beanBalances = [1000, 1000, 1000, 1000],
     mustLackOneSuit = false,
     ruleConfig = null,
+    hands = null,
+    wallTail = null,
+    customWall = null,
   } = options;
 
   const random = createSeededRandom(seed);
-  const wall = shuffleTiles(createWall(), random);
+  const devHands = hands
+    ? Array.from({ length: 4 }, (_, seat) => (Array.isArray(hands[seat]) ? [...hands[seat]] : null))
+    : null;
+  const devWallTail = Array.isArray(wallTail) ? [...wallTail] : null;
+  const hasDevHands = Boolean(devHands && devHands.some((hand) => hand && hand.length > 0));
+  const hasDevWallTail = Boolean(devWallTail && devWallTail.length > 0);
+  const hasCustomWall = Array.isArray(customWall) && customWall.length > 0;
+
+  if (hasCustomWall && (hasDevHands || hasDevWallTail)) {
+    throw new Error("customWall 不能与 hands/wallTail 同时使用");
+  }
+
+  let wall;
+  if (hasCustomWall) {
+    if (customWall.length < 68) {
+      throw new Error("customWall 至少需要 68 张（发牌 53 张 + 牌墙余量）");
+    }
+    const poolCounts = countTiles(createWall());
+    consumeTilesFromPool(poolCounts, customWall, "customWall");
+    wall = [...customWall];
+  } else {
+    const poolCounts = countTiles(createWall());
+    if (hasDevHands) {
+      for (const seat of [0, 1, 2, 3]) {
+        const hand = devHands[seat];
+        if (!hand) continue;
+        const target = seat === dealerSeat ? 14 : 13;
+        if (hand.length > target) {
+          throw new Error(`座位 ${seat} 的指定手牌不能超过 ${target} 张`);
+        }
+        consumeTilesFromPool(poolCounts, hand, "hands");
+      }
+    }
+    if (hasDevWallTail) {
+      consumeTilesFromPool(poolCounts, devWallTail, "wallTail");
+    }
+    wall = shuffleTiles(tilesFromPool(poolCounts), random);
+  }
+
   const players = Array.from({ length: 4 }, (_, seat) => ({
     seat,
     name: playerNames[seat] ?? `玩家${seat + 1}`,
@@ -127,17 +192,54 @@ export function startRound(options = {}) {
   //    被跳过的那张仍留在墙头，下家补抓时自然摸到，不损失任何牌；
   // 3) 其余三家按座位顺序依次各补抓 1 张（各 13 张）。
   const seatOrder = [0, 1, 2, 3].map((offset) => (dealerSeat + offset) % players.length);
-  for (let batch = 0; batch < 3; batch += 1) {
-    for (const seat of seatOrder) {
-      for (let tileIndex = 0; tileIndex < 4; tileIndex += 1) {
-        players[seat].hand.push(wall.shift());
+  if (hasDevHands) {
+    // 开发者指定手牌：按正常抓牌顺序优先发指定牌，不足部分从墙头随机补齐；
+    // 指定牌计入发牌总数（共 53 张），因此发完后牌墙始终剩 83 张。
+    const dealTargets = seatOrder.map((seat) => (seat === dealerSeat ? 14 : 13));
+    const pending = devHands.map((hand) => (hand ? [...hand] : []));
+    const drawnCounts = [0, 0, 0, 0];
+    const dealTile = (seat, useJump) => {
+      if (drawnCounts[seat] >= dealTargets[seat]) {
+        return;
+      }
+      if (pending[seat].length > 0) {
+        players[seat].hand.push(pending[seat].shift());
+      } else {
+        players[seat].hand.push(useJump ? wall.splice(1, 1)[0] : wall.shift());
+      }
+      drawnCounts[seat] += 1;
+    };
+    for (let batch = 0; batch < 3; batch += 1) {
+      for (const seat of seatOrder) {
+        for (let tileIndex = 0; tileIndex < 4; tileIndex += 1) {
+          dealTile(seat, false);
+        }
       }
     }
+    dealTile(dealerSeat, false);
+    dealTile(dealerSeat, true);
+    for (const seat of seatOrder.slice(1)) {
+      dealTile(seat, false);
+    }
+  } else {
+    for (let batch = 0; batch < 3; batch += 1) {
+      for (const seat of seatOrder) {
+        for (let tileIndex = 0; tileIndex < 4; tileIndex += 1) {
+          players[seat].hand.push(wall.shift());
+        }
+      }
+    }
+    players[dealerSeat].hand.push(wall.shift());
+    players[dealerSeat].hand.push(wall.splice(1, 1)[0]);
+    for (const seat of seatOrder.slice(1)) {
+      players[seat].hand.push(wall.shift());
+    }
   }
-  players[dealerSeat].hand.push(wall.shift());
-  players[dealerSeat].hand.push(wall.splice(1, 1)[0]);
-  for (const seat of seatOrder.slice(1)) {
-    players[seat].hand.push(wall.shift());
+
+  // 指定牌墙顺序：发牌结束后插到墙头，即接下来摸牌的精确顺序；
+  // 摸牌从墙头取（shift），翻指示牌/杠补从墙尾取，互不影响。
+  if (devWallTail) {
+    wall.unshift(...devWallTail);
   }
 
   const laiziDice = rollDice(random);

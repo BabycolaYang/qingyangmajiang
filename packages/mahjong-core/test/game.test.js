@@ -1,10 +1,13 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import {
+  TILE_TYPES,
   WIN_TYPES,
   anGang,
   buGang,
   chooseBotDiscardIndex,
+  countTile,
+  createWall,
   discardTile,
   drawForCurrentSeat,
   drawFromBackByDice,
@@ -539,6 +542,141 @@ test("bot keeps laizi when other discards are available", () => {
   const discardIndex = chooseBotDiscardIndex({ hand, melds: [] }, "wan-1");
 
   assert.notEqual(hand[discardIndex], "wan-1");
+});
+
+test("startRound deals developer-specified hands and fills the rest randomly", () => {
+  const state = startRound({
+    dealerSeat: 0,
+    seed: "dev-hands-test",
+    hands: [
+      [
+        "wan-1",
+        "wan-1",
+        "wan-1",
+        "wan-2",
+        "wan-3",
+        "wan-4",
+        "wan-5",
+        "wan-6",
+        "wan-7",
+        "wan-8",
+        "wan-9",
+        "zhong",
+        "zhong",
+        "zhong",
+      ],
+      ["east", "east", "east"],
+      null,
+      [],
+    ],
+  });
+
+  // 指定牌计入发牌总数（53 张），各座位张数与普通开局一致。
+  assert.equal(state.players[0].hand.length, 14);
+  assert.equal(state.players[1].hand.length, 13);
+  assert.equal(state.players[2].hand.length, 13);
+  assert.equal(state.players[3].hand.length, 13);
+  assert.equal(state.wall.length, 82);
+
+  for (const tile of ["wan-1", "wan-2", "wan-9", "zhong"]) {
+    const expected = tile === "wan-1" || tile === "zhong" ? 3 : 1;
+    assert.equal(
+      state.players[0].hand.filter((hand) => hand === tile).length,
+      expected
+    );
+  }
+  assert.deepEqual(
+    state.players[1].hand.filter((tile) => tile === "east").length,
+    3
+  );
+  // 座位 2 未指定、座位 3 空数组：等同随机发满。
+  assert.ok(state.players[2].hand.every((tile) => tile));
+  assert.ok(state.players[3].hand.every((tile) => tile));
+
+  // 牌池守恒：指定牌从总池扣减，全场面（手牌 + 牌墙 + 指示牌）仍恰好 136 张。
+  const allTiles = [
+    ...state.players.flatMap((player) => player.hand),
+    ...state.wall,
+    state.indicatorTile,
+  ];
+  assert.equal(allTiles.length, 136);
+  for (const tile of ["wan-1", "wan-9", "zhong", "east"]) {
+    assert.equal(allTiles.filter((tile2) => tile2 === tile).length, 4);
+  }
+});
+
+test("startRound applies wallTail as the exact upcoming draw order", () => {
+  let state = startRound({
+    dealerSeat: 0,
+    seed: "dev-walltail-test",
+    wallTail: ["tong-1", "tong-2", "tong-3"],
+  });
+
+  state = discardTile(state, 0, 0);
+  state = skipReactions(state);
+  state = drawForCurrentSeat(state);
+  assert.equal(state.lastDraw.tile, "tong-1");
+
+  state = discardTile(state, 1, 0);
+  state = skipReactions(state);
+  state = drawForCurrentSeat(state);
+  assert.equal(state.lastDraw.tile, "tong-2");
+
+  // 指定牌墙计入总池，场面守恒。
+  const allTiles = [...state.players.flatMap((player) => player.hand), ...state.wall];
+  assert.equal(allTiles.filter((tile) => tile === "tong-2").length, 4);
+});
+
+test("startRound supports customWall as an unshuffled exact wall", () => {
+  const customWall = TILE_TYPES.flatMap((tile) => [tile, tile, tile, tile]);
+  const state = startRound({
+    dealerSeat: 0,
+    seed: "dev-customwall-test",
+    customWall,
+  });
+
+  // 无洗牌：前 3 批依次发 wan-1..wan-8 各 4 张，庄家跳牌后各座位如下。
+  assert.equal(countTile(state.players[0].hand, "wan-1"), 4);
+  assert.equal(countTile(state.players[1].hand, "wan-2"), 4);
+  assert.equal(countTile(state.players[2].hand, "wan-3"), 4);
+  assert.equal(countTile(state.players[3].hand, "wan-4"), 4);
+  assert.equal(countTile(state.players[0].hand, "tiao-4"), 2);
+  assert.equal(countTile(state.players[1].hand, "tiao-4"), 1);
+  assert.equal(countTile(state.players[2].hand, "tiao-4"), 1);
+  assert.equal(countTile(state.players[3].hand, "tiao-5"), 1);
+  // 发牌消耗 customWall[0..52]，墙头从 customWall[53]（tiao-5 第 2 张）继续。
+  assert.equal(state.wall[0], "tiao-5");
+  assert.equal(state.wall[1], "tiao-5");
+  assert.equal(state.wall[3], "tiao-6");
+  assert.equal(state.wall.length, 82);
+});
+
+test("startRound rejects invalid developer setups", () => {
+  // 同一张牌超过 4 张。
+  assert.throws(
+    () => startRound({ hands: [["wan-1", "wan-1", "wan-1", "wan-1", "wan-1"], null, null, null] }),
+    /超过了 4 张上限/
+  );
+  // 庄家手牌超过 14 张。
+  assert.throws(
+    () => startRound({ hands: [Array.from({ length: 15 }, () => "wan-2"), null, null, null] }),
+    /座位 0 的指定手牌不能超过 14 张/
+  );
+  // customWall 与 hands 互斥。
+  assert.throws(
+    () => startRound({ hands: [["wan-1"], null, null, null], customWall: createWall() }),
+    /同时使用/
+  );
+  // customWall 太短。
+  assert.throws(
+    () =>
+      startRound({
+        customWall: Array.from({ length: 67 }, (_, index) => TILE_TYPES[index % TILE_TYPES.length]),
+      }),
+    /至少需要 68 张/
+  );
+  // 非法牌名。
+  assert.throws(() => startRound({ hands: [["banana"], null, null, null] }), /Unknown tile/);
 });
 
 function sequenceRandom(values) {

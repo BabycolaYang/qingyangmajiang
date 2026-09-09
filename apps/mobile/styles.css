@@ -1706,6 +1706,47 @@ button.gold {
   font-weight: 700;
 }
 
+/* 开发者模式 · 发牌设置弹窗：复用 .settlement 浮层容器，追加表单样式 */
+.dev-panel h3 {
+  margin: 0 0 10px;
+  font-size: 18px;
+}
+
+.dev-field {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 8px;
+}
+
+.dev-field label {
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.dev-field textarea {
+  width: 100%;
+  min-height: 44px;
+  padding: 8px;
+  border-radius: 6px;
+  border: 1px solid var(--line);
+  background: rgba(0, 0, 0, 0.18);
+  color: inherit;
+  font: inherit;
+  line-height: 1.4;
+  resize: vertical;
+  box-sizing: border-box;
+}
+
+.dev-hint {
+  font-size: 12px;
+  opacity: 0.65;
+  margin: 4px 0 0;
+}
+
+.dev-panel .actions {
+  margin-top: 10px;
+}
+
 .home-screen {
   flex: 1;
   width: min(560px, 100%);
