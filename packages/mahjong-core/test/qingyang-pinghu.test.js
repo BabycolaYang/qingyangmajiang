@@ -433,6 +433,90 @@ test("resolves quan qiu du diao with priority over dui dui hu", () => {
   assert.equal(detail.totalZi, 2 + 6);
 });
 
+const pengOf = (tile) => ({ type: "peng", tile, tiles: [tile, tile, tile] });
+
+test("resolves dui dui hu with exposed pungs", () => {
+  // 碰出一副刻子后胡牌：暗牌 11 张（3 暗刻 + 将），对对胡应成立。
+  const melds = [pengOf("tong-9")];
+  const tiles = [
+    "wan-1",
+    "wan-1",
+    "wan-1",
+    "tiao-2",
+    "tiao-2",
+    "tiao-2",
+    "tong-5",
+    "tong-5",
+    "tong-5",
+    "east",
+    "east",
+  ];
+  const detail = resolveWinDetail({
+    tiles,
+    laiziTile: "zhong",
+    exposedMeldCount: 1,
+    melds,
+  });
+  assert.equal(detail.baseType, WIN_TYPES.EN_DOU);
+  assert.deepEqual(
+    detail.bonuses.map((bonus) => bonus.key),
+    ["duiDuiHu"],
+  );
+  assert.equal(detail.totalZi, 2 + 4);
+  assert.equal(isDuiDuiHu(tiles, "zhong", melds), true);
+
+  // 暗牌里含顺子则不算对对胡（副露刻子也救不回来）。
+  const runTiles = [
+    "wan-1",
+    "wan-1",
+    "wan-1",
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+    "tong-5",
+    "tong-5",
+    "tong-5",
+    "east",
+    "east",
+  ];
+  assert.equal(isDuiDuiHu(runTiles, "zhong", melds), false);
+  const runDetail = resolveWinDetail({
+    tiles: runTiles,
+    laiziTile: "zhong",
+    exposedMeldCount: 1,
+    melds,
+  });
+  assert.deepEqual(runDetail.bonuses, []);
+  assert.equal(runDetail.totalZi, 2);
+});
+
+test("dui dui hu excludes quan qiu du diao shape even when its rule is off", () => {
+  // 全球独钓规则关闭时，"4 组副露只剩对子开牌"也不得回算成对对胡。
+  const fourPungs = [pengOf("wan-2"), pengOf("wan-3"), pengOf("tong-5"), pengOf("tong-7")];
+  const detail = resolveWinDetail({
+    tiles: ["east", "east"],
+    laiziTile: "zhong",
+    exposedMeldCount: 4,
+    melds: fourPungs,
+    ruleConfig: { rules: { quanQiuDuDiao: false } },
+  });
+  assert.equal(detail.baseType, WIN_TYPES.EN_DOU);
+  assert.deepEqual(detail.bonuses, []);
+  assert.equal(detail.totalZi, 2);
+  assert.equal(isDuiDuiHu(["east", "east"], "zhong", fourPungs), false);
+
+  // 赖子替位的碰仍算刻子：2 副露（其中 1 个赖子碰）+ 2 暗刻 + 将 → 对对胡成立。
+  const laiziPeng = { type: "peng", tile: "wan-3", tiles: ["wan-3", "wan-3", "zhong"] };
+  assert.equal(
+    isDuiDuiHu(
+      ["wan-1", "wan-1", "wan-1", "tiao-2", "tiao-2", "tiao-2", "east", "east"],
+      "zhong",
+      [laiziPeng, pengOf("tong-7")],
+    ),
+    true,
+  );
+});
+
 test("counts wind arrow bonuses from hand triplets and melds", () => {
   // 对子不计：2 张一样不算风箭附加
   assert.equal(countWindArrowBonus(["east", "east", "fa"], [], "zhong"), 0);

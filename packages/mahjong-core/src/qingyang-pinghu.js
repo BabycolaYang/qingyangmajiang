@@ -38,7 +38,7 @@ export const BASE_ZI = {
 export const BONUS_ZI = {
   wanGang: 4, // 弯杠：杠牌时胡了但不是跑风
   zhiGang: 10, // 直杠：杠牌时胡了且是跑风
-  duiDuiHu: 4, // 对对胡：开牌时没有顺子
+  duiDuiHu: 4, // 对对胡：开牌时没有顺子（含副露刻子，非全球独钓）
   quanQiuDuDiao: 6, // 全球独钓：只剩 2 张牌开牌（必含对对胡但不叠加）
 };
 
@@ -240,7 +240,8 @@ export function canQiXiaoDui(tiles, laiziTile, options = {}) {
 }
 
 // ==================== 对对胡 ====================
-// 14 张全部由刻子加一对将组成，不允许任何顺子（赖子可补位）。
+// 全手由刻子加一对将组成，不允许任何顺子（暗牌与副露均计入，赖子可补位）；
+// 全球独钓（4 组副露只剩对子开牌）不属于对对胡。
 function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
   const key = `${counts.join(",")}|${laiziCount}`;
   if (memo.has(key)) {
@@ -282,9 +283,30 @@ function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
   return result;
 }
 
-export function isDuiDuiHu(tiles, laiziTile) {
+export function isDuiDuiHu(tiles, laiziTile, melds = []) {
   assertTile(laiziTile);
-  if (!Array.isArray(tiles) || tiles.length !== 14) {
+  if (!Array.isArray(tiles)) {
+    return false;
+  }
+
+  // 副露必须全部是刻子型（碰/杠；赖子替位的碰仍算刻子），出现顺子型副露直接不成立。
+  const meldList = Array.isArray(melds) ? melds : [];
+  for (const meld of meldList) {
+    const meldTiles = (meld?.tiles ?? []).filter((tile) => tile !== laiziTile);
+    if (meldTiles.length === 0 || meldTiles.some((tile) => tile !== meldTiles[0])) {
+      return false;
+    }
+  }
+
+  const meldCount = meldList.length;
+  // 全球独钓：4 组副露只剩对子开牌，不计对对胡。
+  if (meldCount >= 4) {
+    return false;
+  }
+
+  const neededGroups = 4 - meldCount;
+  // 胡牌时暗牌长度恒为 3×暗刻组数 + 2；长度不符说明传入的不是有效胡牌暗牌。
+  if (tiles.length !== neededGroups * 3 + 2) {
     return false;
   }
 
@@ -375,7 +397,11 @@ function buildWinDetail({
         label: BONUS_LABELS.quanQiuDuDiao,
         zi: BONUS_ZI.quanQiuDuDiao,
       });
-    } else if (config.rules.duiDuiHu && isDuiDuiHu(tiles, laiziTile)) {
+    } else if (
+      config.rules.duiDuiHu &&
+      !isQuanQiuDuDiao &&
+      isDuiDuiHu(tiles, laiziTile, melds)
+    ) {
       bonuses.push({ key: "duiDuiHu", label: BONUS_LABELS.duiDuiHu, zi: BONUS_ZI.duiDuiHu });
     }
   }
