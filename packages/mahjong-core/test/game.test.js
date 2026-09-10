@@ -138,6 +138,32 @@ test("performs an gang and draws replacement from the back", () => {
   assert.equal(state.diceHistory.at(-1).total, 2);
 });
 
+test("an gang options exclude the laizi tile", () => {
+  let state = startRound({ dealerSeat: 0, seed: "gang-laizi-test" });
+  const laizi = state.laiziTile;
+  const quadTile = laizi === "wan-1" ? "wan-2" : "wan-1";
+  state.players[0].hand = [
+    laizi,
+    laizi,
+    laizi,
+    laizi,
+    quadTile,
+    quadTile,
+    quadTile,
+    quadTile,
+    "tiao-2",
+    "tiao-3",
+    "tiao-4",
+    "tong-5",
+    "tong-6",
+    "tong-7",
+  ];
+
+  // 集齐 4 张赖子不出暗杠入口（按四喜在胡牌时计子），其余四张照常可杠。
+  assert.deepEqual(getAnGangOptions(state, 0), [quadTile]);
+  assert.ok(!getAnGangOptions(state, 0).includes(laizi));
+});
+
 test("an gang passes when the dice stack is gone from the wall", () => {
   let state = startRound({ dealerSeat: 0, seed: "gang-skip-test" });
   state.players[0].hand = [

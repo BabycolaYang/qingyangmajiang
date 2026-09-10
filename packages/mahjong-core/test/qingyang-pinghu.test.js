@@ -610,6 +610,108 @@ test("dui dui hu excludes quan qiu du diao shape even when its rule is off", () 
   );
 });
 
+test("ambiguous triplet and sequence decompositions are not dui dui hu", () => {
+  // 223344 既能摆 22/33/44 又能摆 234/234：只要存在顺子开牌摆法就不算对对胡。
+  const ambiguousTiles = [
+    "wan-2",
+    "wan-2",
+    "wan-3",
+    "wan-3",
+    "wan-4",
+    "wan-4",
+    "tong-5",
+    "tong-5",
+    "tong-5",
+    "tiao-6",
+    "tiao-6",
+    "tiao-6",
+    "east",
+    "east",
+  ];
+  assert.equal(isDuiDuiHu(ambiguousTiles, "zhong"), false);
+  const ambiguousDetail = resolveWinDetail({
+    tiles: ambiguousTiles,
+    laiziTile: "zhong",
+  });
+  assert.equal(ambiguousDetail.baseType, WIN_TYPES.EN_DOU);
+  assert.deepEqual(ambiguousDetail.bonuses, []);
+  assert.equal(ambiguousDetail.totalZi, 2);
+
+  // 对照：同样骨架换成 222（无顺子摆法）→ 对对胡照常成立。
+  const pureTripletTiles = [
+    "wan-2",
+    "wan-2",
+    "wan-2",
+    "tong-5",
+    "tong-5",
+    "tong-5",
+    "tiao-6",
+    "tiao-6",
+    "tiao-6",
+    "wan-8",
+    "wan-8",
+    "wan-8",
+    "east",
+    "east",
+  ];
+  assert.equal(isDuiDuiHu(pureTripletTiles, "zhong"), true);
+  const pureDetail = resolveWinDetail({
+    tiles: pureTripletTiles,
+    laiziTile: "zhong",
+  });
+  assert.deepEqual(
+    pureDetail.bonuses.map((bonus) => bonus.key),
+    ["duiDuiHu"],
+  );
+  assert.equal(pureDetail.totalZi, 2 + 4);
+});
+
+test("si xi bonus adds 20 zi when winning hand holds four laizi tiles", () => {
+  // 开牌手牌集齐 4 张赖子（跑风 2 跑档）：全刻摆法成立 → 对对胡与四喜叠加。
+  const siXiTiles = [
+    "zhong",
+    "zhong",
+    "zhong",
+    "zhong",
+    "wan-2",
+    "wan-2",
+    "wan-5",
+    "wan-5",
+    "tong-5",
+    "tong-5",
+    "tong-8",
+    "tong-8",
+    "east",
+    "east",
+  ];
+  const detail = resolveWinDetail({
+    tiles: siXiTiles,
+    laiziTile: "zhong",
+    wasRunFengBeforeDraw: true,
+    idleLaiziCount: 4,
+  });
+  assert.equal(detail.baseType, WIN_TYPES.PAO_FENG_2);
+  assert.deepEqual(
+    detail.bonuses.map((bonus) => bonus.key),
+    ["siXi", "duiDuiHu"],
+  );
+  assert.equal(detail.totalZi, 3 + 20 + 4);
+
+  // 四喜规则关闭时不再计四喜。
+  const detailOff = resolveWinDetail({
+    tiles: siXiTiles,
+    laiziTile: "zhong",
+    wasRunFengBeforeDraw: true,
+    idleLaiziCount: 4,
+    ruleConfig: { rules: { siXi: false } },
+  });
+  assert.deepEqual(
+    detailOff.bonuses.map((bonus) => bonus.key),
+    ["duiDuiHu"],
+  );
+  assert.equal(detailOff.totalZi, 3 + 4);
+});
+
 test("counts wind arrow bonuses from hand triplets and melds", () => {
   // 对子不计：2 张一样不算风箭附加
   assert.equal(countWindArrowBonus(["east", "east", "fa"], [], "zhong"), 0);

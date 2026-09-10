@@ -600,7 +600,10 @@ export function getAnGangOptions(state, seat) {
     return [];
   }
   const player = state.players[seat];
-  return TILE_TYPES.filter((tile) => countTile(player.hand, tile) === 4);
+  // 赖子不参与暗杠（集齐 4 张赖子按"四喜"在胡牌时计子，不提供杠赖子入口）。
+  return TILE_TYPES.filter(
+    (tile) => tile !== state.laiziTile && countTile(player.hand, tile) === 4,
+  );
 }
 
 export function anGang(state, seat, tile, random = null) {

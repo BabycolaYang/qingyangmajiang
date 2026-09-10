@@ -40,6 +40,7 @@ export const BONUS_ZI = {
   zhiGang: 10, // 直杠：杠牌时胡了且是跑风
   duiDuiHu: 4, // 对对胡：开牌时没有顺子（含副露刻子，非全球独钓）
   quanQiuDuDiao: 6, // 全球独钓：只剩 2 张牌开牌（必含对对胡但不叠加）
+  siXi: 20, // 四喜：开牌时手牌集齐 4 张赖子
 };
 
 // 头家（庄家）加成（单位：子）：每家多付的子数，跑风翻倍
@@ -65,6 +66,7 @@ export const BONUS_LABELS = {
   zhiGang: "直杠",
   duiDuiHu: "对对胡",
   quanQiuDuDiao: "全球独钓",
+  siXi: "四喜",
   windArrow: "风箭牌",
 };
 
@@ -90,6 +92,7 @@ export const DEFAULT_RULE_CONFIG = {
     zhiGang: true, // 直杠 +10 子
     duiDuiHu: true, // 对对胡 +4 子
     quanQiuDuDiao: true, // 全球独钓 +6 子
+    siXi: true, // 四喜：开牌 4 个赖子 +20 子
     windArrowBonus: true, // 风箭刻子/杠 每个 +1 子
     headBonus: true, // 头家加成：头家多付 1 子、跑风 2 子
     streakPenalty: true, // 连打惩罚：4 家连打同一张牌
@@ -107,6 +110,7 @@ export const RULE_LABELS = {
   zhiGang: "直杠（杠时胡、跑风 +10子）",
   duiDuiHu: "对对胡（没有顺子 +4子）",
   quanQiuDuDiao: "全球独钓（只剩2张开牌 +6子）",
+  siXi: "四喜（开牌4个赖子 +20子）",
   windArrowBonus: "风箭附加（风箭刻子/杠每个 +1子）",
   headBonus: "头家加成（头家多付1子、跑风2子）",
   streakPenalty: "连打惩罚（4家连打同一张牌）",
@@ -337,7 +341,9 @@ export function canQiXiaoDui(tiles, laiziTile, options = {}) {
 }
 
 // ==================== 对对胡 ====================
-// 全手由刻子加一对将组成，不允许任何顺子（暗牌与副露均计入，赖子可补位）；
+// 全手由刻子加一对将组成；规则口径是"开牌时没有顺子"——
+// 既能摆成全刻、又能摆出顺子的牌（如 223344 可摆 22/33/44 也可摆 234/234）
+// 一旦存在含顺子的开牌拆解即不算对对胡。
 // 全球独钓（4 组副露只剩对子开牌）不属于对对胡。
 function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
   const key = `${counts.join(",")}|${laiziCount}`;
@@ -378,6 +384,77 @@ function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
 
   memo.set(key, result);
   return result;
+}
+
+// 是否存在至少一个含顺子的胡牌拆解（将已去除；赖子可补刻/补顺）。
+// 注意：本函数的 memo 缓存语义是"存在含顺子拆解"，与 canFormGroups 的
+// "余牌可拆完"不同，绝不能共用同一个 memo——顺子分支里 trySequence
+// 必须传入独立的新 Map。
+function canFormGroupsWithSequence(counts, laiziCount, memo = new Map()) {
+  const key = `${counts.join(",")}|${laiziCount}`;
+  if (memo.has(key)) {
+    return memo.get(key);
+  }
+
+  const firstIndex = counts.findIndex((count) => count > 0);
+  if (firstIndex === -1) {
+    const result = false;
+    memo.set(key, result);
+    return result;
+  }
+
+  let result = false;
+  // 刻子分支（不引入顺子）：3 真 / 2 真 1 赖 / 1 真 2 赖 / 3 赖
+  if (!result && counts[firstIndex] >= 3) {
+    const nextCounts = [...counts];
+    nextCounts[firstIndex] -= 3;
+    result = canFormGroupsWithSequence(nextCounts, laiziCount, memo);
+  }
+  if (!result && counts[firstIndex] >= 2 && laiziCount >= 1) {
+    const nextCounts = [...counts];
+    nextCounts[firstIndex] -= 2;
+    result = canFormGroupsWithSequence(nextCounts, laiziCount - 1, memo);
+  }
+  if (!result && counts[firstIndex] >= 1 && laiziCount >= 2) {
+    const nextCounts = [...counts];
+    nextCounts[firstIndex] -= 1;
+    result = canFormGroupsWithSequence(nextCounts, laiziCount - 2, memo);
+  }
+  if (!result && laiziCount >= 3) {
+    result = canFormGroupsWithSequence(counts, laiziCount - 3, memo);
+  }
+  // 顺子分支：用掉一个顺子后余牌只需"可拆完"（canFormGroups）即可成立
+  if (!result) {
+    result = trySequence(counts, laiziCount, firstIndex, new Map());
+  }
+
+  memo.set(key, result);
+  return result;
+}
+
+// 枚举将（2 真 / 1 真 1 赖 / 2 赖）：任一将选择下存在含顺子拆解即为 true。
+function hasSequencePairDecomposition(counts, laiziCount) {
+  const memo = new Map();
+  if (laiziCount >= 2 && canFormGroupsWithSequence(counts, laiziCount - 2, memo)) {
+    return true;
+  }
+  for (let index = 0; index < counts.length; index += 1) {
+    if (counts[index] >= 2) {
+      const nextCounts = [...counts];
+      nextCounts[index] -= 2;
+      if (canFormGroupsWithSequence(nextCounts, laiziCount, memo)) {
+        return true;
+      }
+    }
+    if (counts[index] >= 1 && laiziCount >= 1) {
+      const nextCounts = [...counts];
+      nextCounts[index] -= 1;
+      if (canFormGroupsWithSequence(nextCounts, laiziCount - 1, memo)) {
+        return true;
+      }
+    }
+  }
+  return false;
 }
 
 export function isDuiDuiHu(tiles, laiziTile, melds = []) {
@@ -483,6 +560,11 @@ function buildWinDetail({
     } else if (!isRunFeng && config.rules.wanGang) {
       bonuses.push({ key: "wanGang", label: BONUS_LABELS.wanGang, zi: BONUS_ZI.wanGang });
     }
+  }
+
+  // 四喜：开牌时手牌集齐 4 张赖子，+20 子
+  if (config.rules.siXi && countTile(tiles, laiziTile) === 4) {
+    bonuses.push({ key: "siXi", label: BONUS_LABELS.siXi, zi: BONUS_ZI.siXi });
   }
 
   // 牌型附加（七小对不叠加）：全球独钓优先，独钓不再计对对胡
