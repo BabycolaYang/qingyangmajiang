@@ -610,8 +610,9 @@ test("dui dui hu excludes quan qiu du diao shape even when its rule is off", () 
   );
 });
 
-test("ambiguous triplet and sequence decompositions are not dui dui hu", () => {
-  // 223344 既能摆 22/33/44 又能摆 234/234：只要存在顺子开牌摆法就不算对对胡。
+test("pair-only shapes and triplet-based hands are told apart", () => {
+  // 223344+555+666+将：22/33/44 只是对子凑不成刻子，摆牌只有 234/234 的顺子形状
+  // → 不算对对胡。
   const ambiguousTiles = [
     "wan-2",
     "wan-2",
@@ -636,6 +637,35 @@ test("ambiguous triplet and sequence decompositions are not dui dui hu", () => {
   assert.equal(ambiguousDetail.baseType, WIN_TYPES.EN_DOU);
   assert.deepEqual(ambiguousDetail.bonuses, []);
   assert.equal(ambiguousDetail.totalZi, 2);
+
+  // 222333444+555+将：可摆 222/333/444（即便也可摆成 234/234/234 的顺子形状）
+  // 开牌形状能凑成全刻+将 → 照常算对对胡。
+  const tripleTripletTiles = [
+    "wan-2",
+    "wan-2",
+    "wan-2",
+    "wan-3",
+    "wan-3",
+    "wan-3",
+    "wan-4",
+    "wan-4",
+    "wan-4",
+    "tong-5",
+    "tong-5",
+    "tong-5",
+    "east",
+    "east",
+  ];
+  assert.equal(isDuiDuiHu(tripleTripletTiles, "zhong"), true);
+  const tripleTripletDetail = resolveWinDetail({
+    tiles: tripleTripletTiles,
+    laiziTile: "zhong",
+  });
+  assert.deepEqual(
+    tripleTripletDetail.bonuses.map((bonus) => bonus.key),
+    ["duiDuiHu"],
+  );
+  assert.equal(tripleTripletDetail.totalZi, 2 + 4);
 
   // 对照：同样骨架换成 222（无顺子摆法）→ 对对胡照常成立。
   const pureTripletTiles = [
