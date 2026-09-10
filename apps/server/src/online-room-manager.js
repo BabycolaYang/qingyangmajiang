@@ -271,7 +271,10 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
     try {
       room.game = startRound({
         dealerSeat,
-        seed: `${room.code}-${room.currentRound}-${Date.now()}`,
+        // 开发者模式去掉时间戳：同局号 seed 固定，赖子/骰子可预测，便于按完整牌墙精确复现牌型。
+        seed: room.devMode
+          ? `${room.code}-${room.currentRound}`
+          : `${room.code}-${room.currentRound}-${Date.now()}`,
         playerNames,
         beanBalances,
         mustLackOneSuit: room.mustLackOneSuit,

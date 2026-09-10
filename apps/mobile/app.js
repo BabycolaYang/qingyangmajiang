@@ -2982,6 +2982,7 @@ function handleOnlineMessage(message) {
         mustLackOneSuit: message.room.mustLackOneSuit,
         ruleConfig: message.room.ruleConfig,
         devMode: Boolean(message.room.devMode),
+        dealerSeat: message.room.dealerSeat,
         online: true,
       };
       if (message.game?.status === "playing") {

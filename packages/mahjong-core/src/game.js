@@ -22,11 +22,31 @@ import {
 } from "./qingyang-pinghu.js";
 
 export function createSeededRandom(seed = Date.now()) {
-  let state = hashSeed(String(seed));
-  return () => {
+  return makeSeededRandom(hashSeed(String(seed)));
+}
+
+// 与 createSeededRandom 同算法，但可回读当前状态：局中杠骰等随机数沿用
+// 开局 seed 的随机流，让同一 seed 局面的杠补结果也可精确复现（开发者模式）。
+function makeSeededRandom(initialState) {
+  let state = initialState;
+  const random = () => {
     state = (state * 1664525 + 1013904223) >>> 0;
     return state / 0x100000000;
   };
+  random.getState = () => state;
+  return random;
+}
+
+// 局中掷骰（杠骰）：优先使用显式传入的随机源（测试用）；
+// 否则沿用 state.rngState 继续开局 seed 的随机流；最后退回 Math.random。
+function rollDiceInGame(nextState, random) {
+  const rng =
+    random ?? (typeof nextState.rngState === "number" ? makeSeededRandom(nextState.rngState) : Math.random);
+  const dice = rollDice(rng);
+  if (typeof rng.getState === "function") {
+    nextState.rngState = rng.getState();
+  }
+  return dice;
 }
 
 export function rollDice(random = Math.random) {
@@ -270,6 +290,8 @@ export function startRound(options = {}) {
   return {
     id: `round-${seed}`,
     seed,
+    // 开局随机流的最终状态：局中杠骰从这里继续，保证同 seed 局面全程可复现。
+    rngState: random.getState(),
     status: "playing",
     mustLackOneSuit,
     ruleConfig: normalizeRuleConfig(ruleConfig),
@@ -581,7 +603,7 @@ export function getAnGangOptions(state, seat) {
   return TILE_TYPES.filter((tile) => countTile(player.hand, tile) === 4);
 }
 
-export function anGang(state, seat, tile, random = Math.random) {
+export function anGang(state, seat, tile, random = null) {
   const nextState = cloneGame(state);
   const player = nextState.players[seat];
   if (!getAnGangOptions(nextState, seat).includes(tile)) {
@@ -592,7 +614,7 @@ export function anGang(state, seat, tile, random = Math.random) {
   removeTiles(player.hand, tile, 4);
   player.melds.push({ type: "anGang", tile, tiles: [tile, tile, tile, tile], concealed: true });
 
-  const dice = rollDice(random);
+  const dice = rollDiceInGame(nextState, random);
   advanceDeadWallByGang(nextState, dice);
   // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌）。
   const consumedStacks = nextState.diceHistory
@@ -641,7 +663,7 @@ export function getBuGangOptions(state, seat) {
 
 // 执行补杠：手牌移除第 4 张并入对应碰组（type 升级为 buGang），掷骰从墙尾补一张。
 // 牌墙见底时仍可成杠，只是补不出牌（与明杠口径一致）。
-export function buGang(state, seat, tile, random = Math.random) {
+export function buGang(state, seat, tile, random = null) {
   const nextState = cloneGame(state);
   const player = nextState.players[seat];
   if (!getBuGangOptions(nextState, seat).includes(tile)) {
@@ -654,7 +676,7 @@ export function buGang(state, seat, tile, random = Math.random) {
   pengMeld.type = "buGang";
   pengMeld.tiles = [...pengMeld.tiles, tile];
 
-  const dice = rollDice(random);
+  const dice = rollDiceInGame(nextState, random);
   advanceDeadWallByGang(nextState, dice);
   // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌）。
   const consumedStacks = nextState.diceHistory
