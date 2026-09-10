@@ -246,12 +246,13 @@ function normalizeState(nextState) {
     mustLackOneSuit: nextState.mustLackOneSuit ?? false,
     // 开发者模式开关（草稿）：单机随房间快照，联机随创建消息发给服务器。
     devMode: nextState.devMode ?? false,
-    // 发牌设置弹窗：文本草稿（4 座手牌 + 摸牌顺序）与错误提示。
+    // 发牌设置弹窗：文本草稿（4 座手牌 + 摸牌顺序 + 完整牌墙）与错误提示。
     dev: {
       panelOpen: false,
       error: "",
       hands: nextState.dev?.hands ?? ["", "", "", ""],
       wallTail: nextState.dev?.wallTail ?? "",
+      wall: nextState.dev?.wall ?? "",
     },
     // 房间规则草稿（倍率 + 各规则开关）：创建房间时快照进 state.room，
     // 联机创建/快速加入时随消息发给服务器，开出的房间即按此规则进行。
@@ -2545,6 +2546,11 @@ function renderDevSetupPanel() {
         <label for="dev-wall-tail">摸牌顺序 · 最前面最先被摸到，留空随机</label>
         <textarea id="dev-wall-tail" placeholder="例：tong1 2筒 中x2">${escapeHtml(state.dev.wallTail ?? "")}</textarea>
       </div>
+      <div class="dev-field">
+        <label for="dev-wall">完整牌墙（高级）· 留空则按上面配置/随机</label>
+        <textarea id="dev-wall" placeholder="完整 136 张墙序：开头按座位发牌，结尾留白由空格占位可控制赖子与杠补">${escapeHtml(state.dev.wall ?? "")}</textarea>
+        ${(String(state.dev.wall ?? "").trim() ? `<p class="dev-hint">已填写完整牌墙：手牌与摸牌顺序将被忽略，一切以牌墙为准。</p>` : "")}
+      </div>
       <p class="dev-hint">写法：万1 / wan1 / 1万 均可；风箭牌直接连写"东南西北中发白"；x2/x3 表示重复张数。</p>
       <p class="dev-hint">${online
         ? "联机房仅房主可保存，配置对此后每局生效（点开局 / 下一局即按此发牌）。"
@@ -2564,6 +2570,7 @@ function renderDevSetupPanel() {
 function collectDevDrafts() {
   state.dev.hands = [0, 1, 2, 3].map((seat) => app.querySelector(`#dev-hand-${seat}`)?.value ?? state.dev.hands[seat] ?? "");
   state.dev.wallTail = app.querySelector("#dev-wall-tail")?.value ?? state.dev.wallTail ?? "";
+  state.dev.wall = app.querySelector("#dev-wall")?.value ?? state.dev.wall ?? "";
 }
 
 // 草稿 → startRound 配置：全部为空返回 null（=随机发牌）；写法非法直接抛错。
@@ -2574,10 +2581,12 @@ function buildDevPayload() {
   });
   const wallTailText = String(state.dev.wallTail ?? "").trim();
   const wallTail = wallTailText ? parseTilesText(wallTailText) : [];
-  if (!hands.some(Boolean) && wallTail.length === 0) {
+  const wallText = String(state.dev.wall ?? "").trim();
+  const wall = wallText ? parseTilesText(wallText) : [];
+  if (!hands.some(Boolean) && wallTail.length === 0 && wall.length === 0) {
     return null;
   }
-  return { hands, wallTail };
+  return { hands, wallTail, wall };
 }
 
 // 保存：联机发给服务器（空配置=清除），单机存草稿；redeal=true 时按新配置重发本局。
@@ -2604,6 +2613,7 @@ function saveDevSetup({ redeal = false } = {}) {
     // 空配置：清空草稿，回到随机发牌。
     state.dev.hands = ["", "", "", ""];
     state.dev.wallTail = "";
+    state.dev.wall = "";
   }
   state.dev.panelOpen = false;
   if (redeal && state.game) {
@@ -2616,6 +2626,7 @@ function saveDevSetup({ redeal = false } = {}) {
 function clearDevSetup() {
   state.dev.hands = ["", "", "", ""];
   state.dev.wallTail = "";
+  state.dev.wall = "";
   state.dev.error = "";
   if (isOnlineMode()) {
     sendOnline("devSetup", { payload: {} });
@@ -2624,13 +2635,20 @@ function clearDevSetup() {
   render();
 }
 
-// 开局用：开发者模式开启时把草稿解析成 hands/wallTail 传给 startRound。
+// 开局用：开发者模式开启时把草稿解析成 startRound 配置。
+// 完整牌墙（wall）与 hands/wallTail 互斥：引擎要求二选一，这里提前裁决。
 function devRoundOptions() {
   if (!state.devMode) {
     return {};
   }
   const payload = buildDevPayload();
-  return payload ?? {};
+  if (!payload) {
+    return {};
+  }
+  if (payload.wall.length > 0) {
+    return { customWall: payload.wall };
+  }
+  return { hands: payload.hands, wallTail: payload.wallTail };
 }
 
 function createRoom(code = randomRoomCode()) {

@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { createOnlineRoomManager } from "../src/online-room-manager.js";
+import { createOnlineRoomManager, publicGameForSeat } from "../src/online-room-manager.js";
 import { sortTiles } from "../../../packages/mahjong-core/src/index.js";
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -442,4 +442,43 @@ test("invalid dev setup surfaces DEV_SETUP_INVALID and empty payload clears it",
   manager.startGame("a");
   assert.equal(room.game.status, "playing");
   assert.deepEqual(room.game.wall.slice(0, 0), []);
+});
+
+test("custom wall dev setup takes priority and wall stays masked in public view", () => {
+  const manager = createOnlineRoomManager();
+  const room = manager.createRoom({ clientId: "a", nickname: "房主", devMode: true });
+  manager.joinRoom({ clientId: "b", nickname: "朋友", roomCode: room.code });
+
+  // 34 种牌各 2 张 = 68 张完整牌墙（满足 ≥68 与 ≤4 张上限）。
+  const kinds = [
+    ...Array.from({ length: 9 }, (_, i) => `wan-${i + 1}`),
+    ...Array.from({ length: 9 }, (_, i) => `tong-${i + 1}`),
+    ...Array.from({ length: 9 }, (_, i) => `tiao-${i + 1}`),
+    "east", "south", "west", "north", "zhong", "fa", "bai",
+  ];
+  const customWall = [...kinds, ...kinds];
+  // hands 与 wall 同时传入：wall 优先，hands 被忽略（互斥归一化不报错）。
+  manager.devSetup("a", {
+    hands: [["wan-9", "wan-9", "wan-9", "wan-9"], null, null, null],
+    wallTail: ["tong-1"],
+    wall: customWall,
+  });
+  assert.deepEqual(room.devSetup.wall, customWall);
+
+  manager.startGame("a");
+
+  // 发牌共消耗 53 张（4×13 + 庄家 1），翻指示牌再消耗墙尾 1 张，墙剩 14 张
+  // （随机墙应为 82 张，证明 customWall 生效）。
+  assert.equal(room.game.wall.length, customWall.length - 54);
+  const totalHand = room.game.players.reduce((sum, p) => sum + p.hand.length, 0);
+  assert.equal(totalHand, 53);
+
+  // 翻赖子公开后墙牌仍全为牌背：全量墙序不下发客户端（信息泄露防护）。
+  // （保密期定时器不便等待，直接调视图函数传 revealLaizi=true 验证公开后的形态。）
+  const view = publicGameForSeat(room.game, 0, true);
+  assert.deepEqual(view.wall, room.game.wall.map(() => "back"));
+  // 保密期内赖子/指示牌照旧隐藏。
+  const hidden = publicGameForSeat(room.game, 0, false);
+  assert.equal(hidden.laiziTile, null);
+  assert.deepEqual(hidden.wall, room.game.wall.map(() => "back"));
 });

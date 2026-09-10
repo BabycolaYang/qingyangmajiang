@@ -276,7 +276,7 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
         beanBalances,
         mustLackOneSuit: room.mustLackOneSuit,
         ruleConfig: room.ruleConfig,
-        ...(room.devSetup ?? {}),
+        ...normalizeDevSetup(room.devSetup),
       });
     } catch (error) {
       // 开发者模式下的非法配置（超出 4 张上限等）：把底层错误转成带错误码的业务失败。
@@ -293,8 +293,11 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
   }
 
   // 开发者模式：房主保存/清除开局发牌配置。payload 结构：
-  // { hands: [null | ["wan-1", ...]，按 4 个座位], wallTail: ["tong-1", ...] }
-  // wallTail 即接下来的摸牌顺序（前几张最先被摸到）。全部字段为空视为清除配置。
+  // { hands: [null | ["wan-1", ...]，按 4 个座位], wallTail: ["tong-1", ...],
+  //   wall: ["wan-1", ...]（完整牌墙，高级） }
+  // wallTail 即接下来的摸牌顺序（前几张最先被摸到）。wall 为完整墙序（≥68 张），
+  // 可同时精确控制摸牌、赖子（墙尾翻指示牌位）与杠补，配置后与 hands/wallTail 互斥。
+  // 全部字段为空视为清除配置。
   // 合法性（每张牌 ≤4 张等）在 startRound 时校验，非法则报 DEV_SETUP_INVALID。
   function devSetup(clientId, payload = {}) {
     const room = getClientRoom(clientId);
@@ -311,13 +314,25 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
     });
     const rawWallTail = Array.isArray(payload.wallTail) ? payload.wallTail : [];
     const wallTail = rawWallTail.map((tile) => String(tile));
+    const rawWall = Array.isArray(payload.wall) ? payload.wall : [];
+    const wall = rawWall.map((tile) => String(tile));
 
-    if (!hands.some((hand) => hand) && wallTail.length === 0) {
+    if (!hands.some((hand) => hand) && wallTail.length === 0 && wall.length === 0) {
       room.devSetup = null;
     } else {
-      room.devSetup = { hands, wallTail };
+      room.devSetup = { hands, wallTail, wall };
     }
     return room;
+  }
+
+  // 把 devSetup 归一化为 startRound 的 options：配置了完整牌墙时只传 customWall
+  // （引擎要求 customWall 与 hands/wallTail 互斥，这里提前裁决避免误报 DEV_SETUP_INVALID）。
+  function normalizeDevSetup(devSetup) {
+    if (!devSetup) return {};
+    if (Array.isArray(devSetup.wall) && devSetup.wall.length > 0) {
+      return { customWall: devSetup.wall };
+    }
+    return { hands: devSetup.hands, wallTail: devSetup.wallTail };
   }
 
   // 一局收尾（胡牌/荒庄统一入口）：清反应窗口、同步豆子，并安排无在线真人房间的回收定时器。
@@ -545,12 +560,13 @@ export function createOnlineRoomManager({ waitingEvictDelayMs = DEFAULT_WAITING_
 export function publicGameForSeat(game, mySeat, revealLaizi = true) {
   const viewGame = clone(game);
   const originalPlayers = clone(game.players);
-  // 翻牌仪式结束前不公开赖子/指示牌，牌墙只发牌背（客户端只用到墙长）。
+  // 翻牌仪式结束前不公开赖子/指示牌；牌墙永远只发牌背（客户端只用到墙长，
+  // 全量墙牌属于保密信息，翻赖子公开后也不能下发）。
   if (!revealLaizi) {
     viewGame.laiziTile = null;
     viewGame.indicatorTile = null;
-    viewGame.wall = viewGame.wall.map(() => "back");
   }
+  viewGame.wall = viewGame.wall.map(() => "back");
   viewGame.players = Array.from({ length: PLAYER_COUNT }, (_, viewSeat) => {
     const originalSeat = toOriginalSeat(viewSeat, mySeat);
     const player = originalPlayers[originalSeat];
