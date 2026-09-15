@@ -71,6 +71,47 @@ let socket = null;
 let pixiTable = null;
 let pixiRoot = null;
 let pixiInit = null;
+let pixiResizeObserver = null;
+
+// 竖屏手机上把整张牌桌旋转 90° 绘制（内容按横版坐标布局）：
+// 旋转和平移施加在 stage 上，牌桌、开局动画、杠骰特效层全部跟随，
+// 用户把手机顶部向右转横即可正对牌桌；事件命中由 Pixi 逆变换自动处理。
+function applyTableOrientation(stage, width, height) {
+  const rotated = height > width;
+  stage.rotation = rotated ? -Math.PI / 2 : 0;
+  stage.position.set(0, rotated ? height : 0);
+  return rotated;
+}
+
+// 全屏 + 横屏锁定：安卓 Chrome 支持 requestFullscreen + orientation.lock；
+// iOS Safari 不支持方向锁（全屏也可能被拒），失败时静默回退为手动转屏。
+async function enterFullscreenLandscape() {
+  const el = document.documentElement;
+  try {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) {
+      if (el.requestFullscreen) {
+        await el.requestFullscreen({ navigationUI: "hide" });
+      } else if (el.webkitRequestFullscreen) {
+        await el.webkitRequestFullscreen();
+      }
+    }
+  } catch {
+    // 浏览器拒绝（非用户手势等）：忽略，仍尝试方向锁
+  }
+  try {
+    await screen.orientation?.lock?.("landscape");
+  } catch {
+    // iOS 等不支持方向锁：用户手动转横即可（竖屏转屏提示会自动消失）
+  }
+}
+
+function rotateHintDismissed() {
+  try {
+    return localStorage.getItem("rotateHintDismissed") === "1";
+  } catch {
+    return false;
+  }
+}
 // 摸牌动画状态：记录已播放过动画的摸牌标识，避免重绘时重复播放；
 // mergeTimer/merging 用于摸牌展示片刻后自动并入手牌排序（并带归位滑动）。
 // active 计数：进行中的飞入/滑入动画数量；动画期间倒计时重绘跳过，避免打断瞬移。
@@ -634,6 +675,7 @@ function renderTable() {
         <button class="secondary" data-action="back">大厅</button>
         <h1>房号 ${state.room.code}</h1>
         ${state.room.devMode ? `<button class="secondary" data-action="open-dev-setup">发牌设置</button>` : ""}
+        <button class="secondary" data-action="toggle-fullscreen">全屏</button>
         <div class="badge-row">
           ${badgeRowHtml(game)}
         </div>
@@ -643,6 +685,19 @@ function renderTable() {
         ${game.status === "ended" ? renderSettlement() : ""}
         ${state.dev.panelOpen ? renderDevSetupPanel() : ""}
       </section>
+      ${
+        rotateHintDismissed()
+          ? ""
+          : `<div class="rotate-hint">
+              <div class="rotate-hint-card">
+                <div class="rotate-hint-icon" aria-hidden="true"></div>
+                <strong>建议横屏游玩</strong>
+                <p>把手机顶部向右转横，或点「全屏横屏」自动切换</p>
+                <button class="gold" data-action="fullscreen-landscape">全屏横屏</button>
+                <button class="secondary" data-action="dismiss-rotate">竖屏继续</button>
+              </div>
+            </div>`
+      }
       <footer class="controls">
         ${renderControls()}
       </footer>
@@ -680,19 +735,39 @@ async function mountPixiTable(game) {
 
   const width = board.clientWidth;
   const height = board.clientHeight;
+  // 竖屏时旋转绘制：牌桌始终按横版坐标布局（竖屏把手机转横即正对牌桌）。
+  const rotated = applyTableOrientation(table.stage, width, height);
   const root = new Container();
   pixiRoot = root;
   table.stage.addChild(root);
-  drawPixiTable(root, game, width, height);
+  drawPixiTable(root, game, rotated ? height : width, rotated ? width : height);
+
+  // 手机转屏/窗口尺寸变化：防抖到下一帧重算布局与旋转方向。
+  if (pixiResizeObserver) {
+    pixiResizeObserver.disconnect();
+  }
+  let redrawFrame = 0;
+  pixiResizeObserver = new ResizeObserver(() => {
+    cancelAnimationFrame(redrawFrame);
+    redrawFrame = requestAnimationFrame(() => {
+      if (pixiTable === table && pixiRoot && state.view === "table" && state.game) {
+        updateExistingPixiTable(state.game);
+      }
+    });
+  });
+  pixiResizeObserver.observe(board);
 }
 
 function updateExistingPixiTable(game) {
-  if (!pixiRoot) return;
+  if (!pixiRoot || !pixiTable) return;
   for (const child of pixiRoot.removeChildren()) {
     child.destroy?.({ children: true });
   }
   const board = app.querySelector(".board");
-  drawPixiTable(pixiRoot, game, board.clientWidth, board.clientHeight);
+  const width = board.clientWidth;
+  const height = board.clientHeight;
+  const rotated = applyTableOrientation(pixiTable.stage, width, height);
+  drawPixiTable(pixiRoot, game, rotated ? height : width, rotated ? width : height);
 }
 
 // 布局参考 docs/huanle.jpeg（欢乐麻将）：
@@ -704,14 +779,16 @@ const WALL_TOTAL_TILES = 136;
 const WALL_STACKS_PER_SIDE = 17;
 
 function drawPixiTable(root, game, width, height) {
-  const scale = Math.max(0.62, Math.min(width / 1060, height / 600, 1.35));
+  // 手机适配：允许更小的缩放下限与牌面尺寸——小屏/矮屏时稍微缩小牌，
+  // 保证牌墙、弃牌、四家手牌环完整放下，不互相叠压。
+  const scale = Math.max(0.45, Math.min(width / 1060, height / 600, 1.35));
   const cx = width / 2;
   const cy = height * 0.47;
   // 整体牌面放大；牌墙、弃牌与手牌（三家小牌）同尺寸，我的手牌保持前景大牌。
-  const tileW = Math.max(26, 48 * scale);
-  const tileH = Math.max(36, 69 * scale);
-  const smallW = Math.max(19, 36 * scale);
-  const smallH = Math.max(26, 50 * scale);
+  const tileW = Math.max(20, 48 * scale);
+  const tileH = Math.max(28, 69 * scale);
+  const smallW = Math.max(14, 36 * scale);
+  const smallH = Math.max(20, 50 * scale);
   // 罗盘加大：牌墙/弃牌环位仍按基准罗盘半径推算（位置不变），
   // 罗盘本身向中心空区扩张，上限以不触到首排弃牌为准。
   const dialBase = 44 * scale;
@@ -2444,6 +2521,29 @@ function bindTable() {
         }
         if (action === "dev-clear") {
           clearDevSetup();
+        }
+
+        // 手机适配：全屏 + 横屏锁定 / 转屏提示（纯 UI 动作，不触发重渲染）。
+        if (action === "toggle-fullscreen" || action === "fullscreen-landscape") {
+          void enterFullscreenLandscape();
+          if (action === "fullscreen-landscape") {
+            try {
+              localStorage.setItem("rotateHintDismissed", "1");
+            } catch {
+              // 隐私模式等：忽略
+            }
+            app.querySelector(".rotate-hint")?.classList.add("hidden");
+          }
+          return;
+        }
+        if (action === "dismiss-rotate") {
+          try {
+            localStorage.setItem("rotateHintDismissed", "1");
+          } catch {
+            // 隐私模式等：仅本次隐藏
+          }
+          app.querySelector(".rotate-hint")?.classList.add("hidden");
+          return;
         }
 
         if (isOnlineMode()) {

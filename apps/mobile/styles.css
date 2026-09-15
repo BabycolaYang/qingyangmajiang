@@ -1882,3 +1882,145 @@ button.gold {
     font-size: 17px;
   }
 }
+
+/* ===== 手机适配：横屏提示 + 竖屏旋转牌桌 + 矮屏布局压缩 ===== */
+html,
+body {
+  overscroll-behavior: none;
+}
+
+/* 横屏提示浮层：仅 竖屏 + 触屏设备 显示；CSS 媒体查询驱动，转屏即时生效 */
+.rotate-hint {
+  display: none;
+}
+
+.rotate-hint.hidden {
+  display: none !important;
+}
+
+@keyframes rotate-hint-swing {
+  0%,
+  18% {
+    transform: rotate(0deg);
+  }
+  55%,
+  100% {
+    transform: rotate(90deg);
+  }
+}
+
+.rotate-hint-card {
+  display: grid;
+  justify-items: center;
+  gap: 10px;
+  width: min(320px, 84vw);
+  padding: 22px 20px;
+  border: 1px solid rgba(255, 233, 196, 0.35);
+  border-radius: 18px;
+  background: linear-gradient(180deg, rgba(9, 35, 32, 0.94), rgba(0, 0, 0, 0.9));
+  box-shadow: 0 18px 46px rgba(0, 0, 0, 0.4);
+  color: #ffe9c4;
+  text-align: center;
+}
+
+.rotate-hint-card strong {
+  font-size: 19px;
+  letter-spacing: 2px;
+}
+
+.rotate-hint-card p {
+  margin: 0;
+  font-size: 13px;
+  color: rgba(255, 233, 196, 0.78);
+}
+
+.rotate-hint-card button {
+  width: 100%;
+  min-height: 44px;
+}
+
+.rotate-hint-icon {
+  width: 44px;
+  height: 74px;
+  border: 4px solid #ffe9c4;
+  border-radius: 10px;
+  animation: rotate-hint-swing 2.2s ease-in-out infinite;
+}
+
+@media (orientation: portrait) and (pointer: coarse) {
+  .rotate-hint {
+    position: fixed;
+    inset: 0;
+    z-index: 60;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: rgba(3, 22, 19, 0.78);
+    backdrop-filter: blur(5px);
+  }
+}
+
+/* 竖屏：牌桌边距收紧（旋转后的横版牌桌铺满画布） */
+@media (orientation: portrait) {
+  .board {
+    margin: 4px 10px 12px;
+  }
+}
+
+/* 手机横屏（矮屏）：压缩头栏/边距/按钮，把高度尽量留给牌桌 */
+@media (orientation: landscape) and (max-height: 520px) {
+  .table {
+    grid-template-rows: 32px minmax(0, 1fr);
+  }
+
+  .table::before {
+    inset: 4px;
+    border-width: 8px;
+    border-radius: 16px;
+  }
+
+  .table-head {
+    gap: 6px;
+    padding: calc(2px + env(safe-area-inset-top)) 8px 2px;
+  }
+
+  .table-head h1 {
+    font-size: 15px;
+  }
+
+  .table-head .secondary {
+    min-height: 26px;
+    padding: 0 10px;
+    font-size: 12px;
+  }
+
+  .badge {
+    min-height: 22px;
+    padding: 2px 6px;
+    font-size: 11px;
+  }
+
+  .board {
+    margin: 2px 10px 32px;
+    border-radius: 12px;
+  }
+
+  .controls {
+    right: 12%;
+    bottom: 9%;
+    gap: 8px;
+  }
+
+  .controls button {
+    width: 50px;
+    height: 50px;
+    font-size: 16px;
+  }
+
+  .controls button[data-action="win"],
+  .controls button[data-action="gang"],
+  .controls button[data-action="next-round"] {
+    padding: 0 12px;
+    font-size: 14px;
+  }
+}
