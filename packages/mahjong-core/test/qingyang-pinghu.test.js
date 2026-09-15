@@ -175,6 +175,19 @@ test("checks lack-one-suit only for wan, tiao, and tong", () => {
   assert.equal(hasLackOneSuit(["wan-1", "tiao-2", "tong-3", "east"]), false);
 });
 
+test("laizi is ignored when checking lack-one-suit", () => {
+  // 手牌只有筒+条，赖子是万子：算缺门时赖子不算万子，仍视为缺万子（可开牌）。
+  assert.equal(
+    hasLackOneSuit(["tong-1", "tong-2", "tiao-3", "tiao-4", "wan-9"], "wan-9"),
+    true,
+  );
+  // 再加一张真万子（非赖子）后横跨三门，缺门不成立。
+  assert.equal(
+    hasLackOneSuit(["tong-1", "tong-2", "tiao-3", "tiao-4", "wan-9", "wan-1"], "wan-9"),
+    false,
+  );
+});
+
 test("detects a run-feng thirteen-wait shape with four laizi", () => {
   const waitingTiles = [
     "east",

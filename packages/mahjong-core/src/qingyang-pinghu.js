@@ -138,10 +138,14 @@ export function normalizeRuleConfig(config) {
 
 // ==================== 基础胡牌结构（沿用原有判定） ====================
 
-export function hasLackOneSuit(tiles) {
+export function hasLackOneSuit(tiles, laiziTile) {
   const presentSuits = new Set();
   for (const tile of tiles) {
     assertTile(tile);
+    // 算缺门时赖子不算入任何花色：赖子是百搭，不占用其本门。
+    if (laiziTile !== undefined && tile === laiziTile) {
+      continue;
+    }
     const suit = getSuit(tile);
     if (SUITS.includes(suit)) {
       presentSuits.add(suit);
@@ -154,7 +158,7 @@ export function canPingHu(tiles, laiziTile, options = {}) {
   assertTile(laiziTile);
   const { mustLackOneSuit = false, exposedMeldCount = 0 } = options;
 
-  if (mustLackOneSuit && !hasLackOneSuit(tiles)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
     return false;
   }
 
@@ -170,7 +174,7 @@ export function canHu(tiles, laiziTile, options = {}) {
   assertTile(laiziTile);
   const { mustLackOneSuit = false, runFeng = false, exposedMeldCount = 0 } = options;
 
-  if (mustLackOneSuit && !hasLackOneSuit(tiles)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
     return false;
   }
 
@@ -186,7 +190,7 @@ export function canRunFeng(waitingTiles, laiziTile, options = {}) {
   const { mustLackOneSuit = false, exposedMeldCount = 0 } = options;
 
   // 打缺时手牌必须已缺门：横跨三门时无论摸什么牌都无法开牌，谈不上跑风。
-  if (mustLackOneSuit && !hasLackOneSuit(waitingTiles)) {
+  if (mustLackOneSuit && !hasLackOneSuit(waitingTiles, laiziTile)) {
     return false;
   }
 
@@ -194,7 +198,7 @@ export function canRunFeng(waitingTiles, laiziTile, options = {}) {
     const tiles = [...waitingTiles, drawnTile];
     // 打缺时，摸到会破坏缺门的那门牌本就无法开牌，该牌不参与跑风判定；
     // 其余牌摸到即能开牌才算跑风（否则打缺房永远无法跑风）。
-    if (mustLackOneSuit && !hasLackOneSuit(tiles)) {
+    if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
       return true;
     }
     return canHu(tiles, laiziTile, {
@@ -311,7 +315,7 @@ export function canQiXiaoDui(tiles, laiziTile, options = {}) {
   if (!Array.isArray(tiles) || tiles.length !== 14) {
     return false;
   }
-  if (mustLackOneSuit && !hasLackOneSuit(tiles)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
     return false;
   }
 
