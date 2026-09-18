@@ -332,6 +332,16 @@ export function startRound(options = {}) {
   };
 }
 
+// 直杠/弯杠的跑风口径：以"杠掉牌之后、补摸之前"的剩余手牌实时判定——
+// 杠后满张听（摸任意牌都能开）即视为杠时处于跑风状态（直杠），否则为弯杠。
+// 不再沿用上一轮摸牌前的旧标志：摸到赖子过胡再杠时，跑风恰恰形成于杠后。
+function runFengAfterGang(nextState, player) {
+  return canRunFeng(player.hand, nextState.laiziTile, {
+    mustLackOneSuit: nextState.mustLackOneSuit,
+    exposedMeldCount: player.melds.length,
+  });
+}
+
 export function drawForCurrentSeat(state, options = {}) {
   const nextState = cloneGame(state);
   const player = nextState.players[nextState.currentSeat];
@@ -563,7 +573,7 @@ export function mingGangDiscard(state, seat, random = Math.random) {
   const discarder = nextState.players[nextState.lastDiscard.seat];
   discarder.discards.splice(nextState.lastDiscard.discardIndex, 1);
 
-  const wasRunFengBeforeGang = nextState.runFengBeforeDraw[seat] === true;
+  const wasRunFengBeforeGang = runFengAfterGang(nextState, player);
   const dice = rollDice(random);
   advanceDeadWallByGang(nextState, dice);
   // 杠补按墩取牌：骰子指到的墩已被取空或数不到时"空过"（不补牌，牌墙见底同理）。
@@ -590,7 +600,7 @@ export function mingGangDiscard(state, seat, random = Math.random) {
   nextState.currentSeat = seat;
   nextState.phase = "discard";
   nextState.lastDiscard = null;
-  nextState.log.push({ type: "mingGang", seat, tile, dice, drawnTile });
+  nextState.log.push({ type: "mingGang", seat, tile, dice, drawnTile, wasRunFengBeforeGang });
 
   return nextState;
 }
@@ -613,9 +623,9 @@ export function anGang(state, seat, tile, random = null) {
     throw new Error(`An gang is not available for ${tile}`);
   }
 
-  const wasRunFengBeforeGang = nextState.runFengBeforeDraw[seat] === true;
   removeTiles(player.hand, tile, 4);
   player.melds.push({ type: "anGang", tile, tiles: [tile, tile, tile, tile], concealed: true });
+  const wasRunFengBeforeGang = runFengAfterGang(nextState, player);
 
   const dice = rollDiceInGame(nextState, random);
   advanceDeadWallByGang(nextState, dice);
@@ -673,11 +683,11 @@ export function buGang(state, seat, tile, random = null) {
     throw new Error(`Bu gang is not available for ${tile}`);
   }
 
-  const wasRunFengBeforeGang = nextState.runFengBeforeDraw[seat] === true;
   removeTiles(player.hand, tile, 1);
   const pengMeld = player.melds.find((meld) => meld.type === "peng" && meld.tile === tile);
   pengMeld.type = "buGang";
   pengMeld.tiles = [...pengMeld.tiles, tile];
+  const wasRunFengBeforeGang = runFengAfterGang(nextState, player);
 
   const dice = rollDiceInGame(nextState, random);
   advanceDeadWallByGang(nextState, dice);

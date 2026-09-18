@@ -12,4 +12,10 @@ coverage/
 .env
 .env.*
 !.env.example
+# Cocos Creator 编辑器缓存，不入库
+babykylin_scmj/client/library/
+babykylin_scmj/client/temp/
+babykylin_scmj/client/local/
+# 构建产物例外：web-mobile 需要入库（服务器部署直接 clone 即用）
+!babykylin_scmj/client/build/
 
