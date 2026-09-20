@@ -6,6 +6,7 @@ import {
   anGang,
   buGang,
   chooseBotDiscardIndex,
+  chooseBotReaction,
   countTile,
   createWall,
   discardTile,
@@ -568,6 +569,93 @@ test("bot keeps laizi when other discards are available", () => {
   const discardIndex = chooseBotDiscardIndex({ hand, melds: [] }, "wan-1");
 
   assert.notEqual(hand[discardIndex], "wan-1");
+});
+
+test("bot lack target excludes suits already exposed by melds", () => {
+  // 副露已碰筒子，手牌万条筒三门：缺门只能从万/条中选，绝不该锁定筒——
+  // 否则打完筒后手牌仍万条两门 + 副露筒 = 三门齐，永远无法开牌。
+  const hand = sortTiles([
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "tiao-5",
+    "tiao-6",
+    "tiao-7",
+    "tong-9",
+    "east",
+    "east",
+    "south",
+    "zhong",
+    "bai",
+    "fa",
+    "north",
+  ]);
+  const player = {
+    hand,
+    melds: [{ type: "peng", tile: "tong-1", tiles: ["tong-1", "tong-1", "tong-1"], fromSeat: 2 }],
+  };
+  const discardIndex = chooseBotDiscardIndex(player, "north", { mustLackOneSuit: true });
+
+  assert.ok(["wan-1", "wan-2", "wan-3"].includes(hand[discardIndex]));
+});
+
+test("bot refuses a peng that would leave three suits across hand and melds", () => {
+  // 已碰筒子，手牌还有万条两门：再碰筒就三门齐，须打掉一整门（≥3 张）→ 拒碰。
+  let state = startRound({ dealerSeat: 0, seed: "peng-lack-refuse", mustLackOneSuit: true });
+  state.players[1].hand = sortTiles([
+    "tong-5",
+    "tong-5",
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "wan-5",
+    "wan-6",
+    "tiao-1",
+    "tiao-2",
+    "tiao-3",
+    "east",
+    "east",
+  ]);
+  state.players[1].melds = [
+    { type: "peng", tile: "tong-9", tiles: ["tong-9", "tong-9", "tong-9"], fromSeat: 2 },
+  ];
+
+  const tile = "tong-5";
+  state.players[0].hand[0] = tile;
+  state = discardTile(state, 0, 0);
+
+  assert.deepEqual(getPengOptions(state, 1), [tile]);
+  assert.equal(chooseBotReaction(state, 1), null);
+});
+
+test("bot accepts a peng that keeps hand plus melds within two suits", () => {
+  // 副露碰的是万，手牌碰筒后只剩万一门 + 副露万筒 = 两门 → 正常碰。
+  let state = startRound({ dealerSeat: 0, seed: "peng-lack-accept", mustLackOneSuit: true });
+  state.players[1].hand = sortTiles([
+    "tong-5",
+    "tong-5",
+    "wan-1",
+    "wan-2",
+    "wan-3",
+    "wan-4",
+    "wan-5",
+    "wan-6",
+    "wan-7",
+    "wan-8",
+    "wan-9",
+    "east",
+    "east",
+  ]);
+  state.players[1].melds = [
+    { type: "peng", tile: "wan-3", tiles: ["wan-3", "wan-3", "wan-3"], fromSeat: 2 },
+  ];
+
+  const tile = "tong-5";
+  state.players[0].hand[0] = tile;
+  state = discardTile(state, 0, 0);
+
+  assert.deepEqual(chooseBotReaction(state, 1), { action: "peng", tile });
 });
 
 test("startRound deals developer-specified hands and fills the rest randomly", () => {

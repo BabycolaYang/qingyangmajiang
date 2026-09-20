@@ -288,6 +288,9 @@ cc.Class({
             console.log("login_finished");
             cc.director.loadScene("mjgame",function(){
                 cc.vv.net.ping();
+                // 断线重连：场景重建会销毁旧 Canvas 上的翻牌视图，在新场景补显
+                // （laizi<0 或非对局中时 showLaiziView 内部自动跳过）
+                self.showLaiziView();
                 cc.vv.wc.hide();
             });
             self.dispatchEvent("login_finished");

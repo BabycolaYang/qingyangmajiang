@@ -36,10 +36,10 @@ DROP TABLE IF EXISTS `t_games`;
 CREATE TABLE `t_games` (
   `room_uuid` char(20) NOT NULL,
   `game_index` smallint(6) NOT NULL,
-  `base_info` varchar(1024) NOT NULL,
+  `base_info` TEXT NOT NULL,
   `create_time` int(11) NOT NULL,
   `snapshots` char(255) DEFAULT NULL,
-  `action_records` varchar(2048) DEFAULT NULL,
+  `action_records` TEXT DEFAULT NULL,
   `result` char(255) DEFAULT NULL,
   PRIMARY KEY (`room_uuid`,`game_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -55,10 +55,10 @@ DROP TABLE IF EXISTS `t_games_archive`;
 CREATE TABLE `t_games_archive` (
   `room_uuid` char(20) NOT NULL,
   `game_index` smallint(6) NOT NULL,
-  `base_info` varchar(1024) NOT NULL,
+  `base_info` TEXT NOT NULL,
   `create_time` int(11) NOT NULL,
   `snapshots` char(255) DEFAULT NULL,
-  `action_records` varchar(2048) DEFAULT NULL,
+  `action_records` TEXT DEFAULT NULL,
   `result` char(255) DEFAULT NULL,
   PRIMARY KEY (`room_uuid`,`game_index`)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8;
@@ -104,7 +104,7 @@ DROP TABLE IF EXISTS `t_rooms`;
 CREATE TABLE `t_rooms` (
   `uuid` char(20) NOT NULL,
   `id` char(8) NOT NULL,
-  `base_info` varchar(256) NOT NULL DEFAULT '0',
+  `base_info` TEXT NOT NULL,
   `create_time` int(11) NOT NULL,
   `num_of_turns` int(11) NOT NULL DEFAULT '0',
   `next_button` int(11) NOT NULL DEFAULT '0',
@@ -151,7 +151,7 @@ CREATE TABLE `t_users` (
   `coins` int(11) DEFAULT '0' COMMENT '用户金币',
   `gems` int(11) DEFAULT '0' COMMENT '用户宝石',
   `roomid` varchar(8) DEFAULT NULL,
-  `history` varchar(4096) NOT NULL DEFAULT '',
+  `history` TEXT NOT NULL,
   PRIMARY KEY (`userid`),
   UNIQUE KEY `account` (`account`)
 ) ENGINE=InnoDB AUTO_INCREMENT=13 DEFAULT CHARSET=utf8;

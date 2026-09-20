@@ -846,3 +846,112 @@ test("normalizeRuleConfig fills defaults and guards the multiplier", () => {
   const unknown = normalizeRuleConfig({ multiplier: 10, rules: { noSuchRule: false } });
   assert.equal(unknown.rules.noSuchRule, undefined);
 });
+
+test("exposed melds count as a suit for the lack-one-suit check", () => {
+  // 手牌两门（万+条）的标准平胡 14 张：缺一门模式下可胡。
+  const twoSuitHand = [
+    "wan-1", "wan-2", "wan-3",
+    "wan-5", "wan-5", "wan-5",
+    "tiao-2", "tiao-3", "tiao-4",
+    "tiao-7", "tiao-8", "tiao-9",
+    "tiao-5", "tiao-5",
+  ];
+
+  // 无副露：两门 → 可胡
+  assert.equal(hasLackOneSuit(twoSuitHand, "zhong"), true);
+  assert.equal(canHu(twoSuitHand, "zhong", { mustLackOneSuit: true }), true);
+  assert.notEqual(
+    resolveWinDetail({ tiles: twoSuitHand, laiziTile: "zhong", mustLackOneSuit: true }),
+    null,
+  );
+
+  // 碰/杠了筒子（副露第三门）：手牌两门 + 副露一门 = 三门齐 → 不可胡。
+  // "缺一门"以手牌 ∪ 副露的花色并集判定，不能只看手牌。
+  assert.equal(hasLackOneSuit(twoSuitHand, "zhong", ["tong"]), false);
+  assert.equal(canHu(twoSuitHand, "zhong", { mustLackOneSuit: true, exposedSuits: ["tong"] }), false);
+  assert.equal(
+    resolveWinDetail({ tiles: twoSuitHand, laiziTile: "zhong", mustLackOneSuit: true, exposedSuits: ["tong"] }),
+    null,
+  );
+  assert.equal(
+    resolveWinType({ tiles: twoSuitHand, laiziTile: "zhong", mustLackOneSuit: true, exposedSuits: ["tong"] }),
+    null,
+  );
+
+  // 副露花色与手牌重合（碰了万）：并集仍是两门 → 仍可胡。
+  assert.equal(hasLackOneSuit(twoSuitHand, "zhong", ["wan"]), true);
+  assert.equal(canHu(twoSuitHand, "zhong", { mustLackOneSuit: true, exposedSuits: ["wan"] }), true);
+
+  // 碰/杠了字牌不占数字门：不影响缺一门判定。
+  assert.equal(hasLackOneSuit(twoSuitHand, "zhong", ["zhong", "east"]), true);
+
+  // 暗杠同样占门：anGang 也在 melds 里，type 不影响花色统计；
+  // 混入字牌副露（不占数字门）验证只有数字门参与并集。
+  assert.equal(hasLackOneSuit(twoSuitHand, "zhong", ["tong", "zhong"]), false);
+});
+
+// ==================== 对对胡跑风口径 ====================
+// 听牌（摸牌前）拆解已定死：摸上来的牌只能和闲赖子组成将或刻子，
+// 不能再与听牌里的真牌重新组合。
+test("run-feng dui dui hu locks the pre-draw decomposition", () => {
+  const melds = [pengOf("east"), pengOf("south")];
+
+  // 112233+1赖（听牌认定 = 123+123+1闲赖）：跑风摸 1 只能解析为
+  // 123+123+11（摸牌与闲赖凑将）→ 不能重摆成 1112233 → 不算对对胡。
+  const withDrawn = [
+    ...handWithLaizi("wan-1,wan-1,wan-2,wan-2,wan-3,wan-3", 1),
+    "wan-1",
+  ];
+  assert.equal(
+    isDuiDuiHu(withDrawn, "zhong", melds, { isRunFeng: true, drawnTile: "wan-1" }),
+    false,
+  );
+  // 对照：不传跑风上下文（旧口径）→ 1112233+1赖 可行 → 照旧算对对胡。
+  assert.equal(isDuiDuiHu(withDrawn, "zhong", melds), true);
+  // 非跑风即使带 drawnTile 也走原口径。
+  assert.equal(
+    isDuiDuiHu(withDrawn, "zhong", melds, { isRunFeng: false, drawnTile: "wan-1" }),
+    true,
+  );
+
+  // 端到端：resolveWinDetail 带跑风上下文时同样不再给出对对胡附加。
+  const detail = resolveWinDetail({
+    tiles: withDrawn,
+    laiziTile: "zhong",
+    wasRunFengBeforeDraw: true,
+    drawnTile: "wan-1",
+    melds,
+    exposedMeldCount: melds.length,
+  });
+  assert.notEqual(detail, null);
+  assert.equal(detail.bonuses.some((bonus) => bonus.key === "duiDuiHu"), false);
+
+  // 11233+2赖（听牌认定 = 123+12(赖)+3+1闲赖）：摸 1/2/3 任意一张都不能认定对对胡。
+  for (const drawn of ["wan-1", "wan-2", "wan-3"]) {
+    const tiles = [
+      ...handWithLaizi("wan-1,wan-1,wan-2,wan-3,wan-3", 2),
+      drawn,
+    ];
+    assert.equal(
+      isDuiDuiHu(tiles, "zhong", melds, { isRunFeng: true, drawnTile: drawn }),
+      false,
+      `11233+2赖 跑风摸 ${drawn} 不应判对对胡`,
+    );
+  }
+
+  // 111222333+1赖：既可拆 3 个顺子也可拆 3 个刻子 → 取最优（全刻拆法），
+  // 摸 1 与闲赖凑将 → 照算对对胡。
+  const ambiguousTriplets = [
+    ...handWithLaizi("wan-1,wan-1,wan-1,wan-2,wan-2,wan-2,wan-3,wan-3,wan-3", 1),
+    "wan-1",
+  ];
+  assert.equal(
+    isDuiDuiHu(
+      ambiguousTriplets,
+      "zhong",
+      [pengOf("east")],
+      { isRunFeng: true, drawnTile: "wan-1" },
+    ),
+    true,
+  );
+});

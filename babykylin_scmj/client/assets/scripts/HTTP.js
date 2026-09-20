@@ -1,5 +1,8 @@
 
-var URL = "http://127.0.0.1:9000";
+// 按页面域名自动推断：远程站点（如 117.72.241.97:8080）连同 IP 的 9000；本地预览连 127.0.0.1:9000
+var URL = (typeof location !== "undefined" && location.hostname !== "127.0.0.1" && location.hostname !== "localhost")
+    ? "http://" + location.hostname + ":9000"
+    : "http://127.0.0.1:9000";
 
 exports.master_url = null;
 exports.url = null;

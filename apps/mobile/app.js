@@ -31,6 +31,108 @@ const app = document.querySelector("#app");
 const storageKey = "qingyang-pinghu-mobile";
 const botNames = ["下家", "对家", "上家"];
 
+// ===== 游戏音效 =====
+// 素材来自 babykylin 客户端现成 mp3（apps/mobile/sounds/），HTMLAudio 播放：
+// - 事件音由 core 游戏日志驱动（syncGameSounds 做跨重绘的光标去重）；
+// - 背景音在牌桌对局中循环（浏览器自动播放策略：首次用户手势后生效）；
+// - 静音开关持久化 localStorage，切换时直接改按钮文案（不触发全量重绘）。
+const SOUND_MUTED_KEY = "qingyang-sound-muted";
+const SOUND_SOURCES = {
+  shuffle: "./sounds/shuffle.mp3", // 开局发牌仪式
+  discard: "./sounds/drop.mp3", // 出牌落桌
+  peng: "./sounds/peng.mp3", // 碰（语音）
+  gang: "./sounds/gang.mp3", // 杠（语音）
+  hu: "./sounds/hu.mp3", // 胡（语音）
+  win: "./sounds/win.mp3", // 自己胡牌胜利音
+  draw: "./sounds/shuffle.mp3", // 流局洗牌重来
+  click: "./sounds/click.mp3", // 按钮点击
+};
+// 模块级预热：触发浏览器下载缓存，避免首次播放延迟。
+for (const source of Object.values(SOUND_SOURCES)) {
+  try {
+    const warmer = new Audio(source);
+    warmer.preload = "auto";
+    warmer.load();
+  } catch {
+    /* 非浏览器环境等：静默退化 */
+  }
+}
+const bgmAudio = new Audio("./sounds/bgm.mp3");
+bgmAudio.loop = true;
+bgmAudio.volume = 0.18;
+// 日志消费光标：记录"已播过音效的 game.id + log 长度"，重绘/重连不重播历史。
+const soundCursor = { gameId: null, index: 0 };
+
+function isSoundMuted() {
+  try {
+    return localStorage.getItem(SOUND_MUTED_KEY) === "1";
+  } catch {
+    return false;
+  }
+}
+
+function playSfx(name, volume = 1) {
+  if (isSoundMuted()) {
+    return;
+  }
+  try {
+    const audio = new Audio(SOUND_SOURCES[name]);
+    audio.volume = volume;
+    void audio.play().catch(() => {});
+  } catch {
+    /* 音频不可用：静默退化 */
+  }
+}
+
+// 背景音开关：牌桌对局中播放，静音/回大厅/结算暂停。
+// play() 被 iOS 等自动播放策略拒绝时静默忽略，之后的首次手势会再尝试。
+function syncBgm() {
+  const shouldPlay =
+    !isSoundMuted() && state.view === "table" && Boolean(state.game) && state.game.status === "playing";
+  if (shouldPlay) {
+    if (bgmAudio.paused) {
+      void bgmAudio.play().catch(() => {});
+    }
+  } else if (!bgmAudio.paused) {
+    bgmAudio.pause();
+  }
+}
+
+// 对局事件音：消费游戏日志增量（discard/peng/gang/win/drawGame）。
+// 联机视角日志的 seat 是服务器原始座位，"自己胡"需与 players[0].originalSeat 比对。
+function syncGameSounds(game) {
+  if (!game?.log || !game.id) {
+    return;
+  }
+  if (soundCursor.gameId !== game.id) {
+    // 首见该局/换局：跳过历史日志（重连不重播），换局的发牌声由开局动画负责。
+    soundCursor.gameId = game.id;
+    soundCursor.index = game.log.length;
+    return;
+  }
+  const mySeat = game.players[0]?.originalSeat ?? 0;
+  for (; soundCursor.index < game.log.length; soundCursor.index += 1) {
+    const entry = game.log[soundCursor.index];
+    if (entry.type === "discard") {
+      playSfx("discard", 0.55);
+    } else if (entry.type === "peng") {
+      playSfx("peng", 0.9);
+    } else if (entry.type === "mingGang" || entry.type === "anGang" || entry.type === "buGang") {
+      playSfx("gang", 0.9);
+    } else if (entry.type === "win") {
+      playSfx("hu", 1);
+      if (entry.seat === mySeat) {
+        playSfx("win", 0.7);
+      }
+    } else if (entry.type === "drawGame") {
+      playSfx("draw", 0.4);
+    }
+  }
+}
+
+// 首次用户手势后解锁自动播放策略（iOS Safari 等），此后 BGM 可随牌桌进入自动响起。
+document.addEventListener("pointerdown", () => syncBgm(), true);
+
 // 账号凭据存 localStorage（同浏览器共享登录态，业界标准行为）：
 // 新 tab / 邀请链接打开时自动登录，无需重复登录；座位 token 才用 sessionStorage（短时效、关 tab 即弃）。
 // 注意：必须位于下方 `const state = loadState()` 之前——初始化链路会调用 loadAuthSession()，
@@ -342,6 +444,9 @@ function saveState() {
 function render() {
   clearTimeout(botTimer);
   saveState();
+  // 音效：先消费对局日志增量（碰/杠/胡/出牌），再同步背景音（牌桌对局循环）。
+  syncGameSounds(state.game);
+  syncBgm();
 
   // 登录门槛：未登录只能看到登录/注册页，不能进入大厅与牌桌游玩。
   if (!state.auth.user) {
@@ -675,6 +780,7 @@ function renderTable() {
         <button class="secondary" data-action="back">大厅</button>
         <h1>房号 ${state.room.code}</h1>
         ${state.room.devMode ? `<button class="secondary" data-action="open-dev-setup">发牌设置</button>` : ""}
+        <button class="secondary" data-action="toggle-sound">${isSoundMuted() ? "声音：关" : "声音：开"}</button>
         <button class="secondary" data-action="toggle-fullscreen">全屏</button>
         <div class="badge-row">
           ${badgeRowHtml(game)}
@@ -1588,6 +1694,8 @@ function introHandSlot(seat, index, count, m) {
 // 全部抓完后进入本家理牌排序阶段，再掷翻牌骰。
 function runIntroDealPhase(game) {
   roundIntro.phase = "deal";
+  // 发牌仪式音效：洗牌/码牌声盖过整段飞牌动画（一次播放，不逐张触发）。
+  playSfx("shuffle", 0.6);
   clearIntroLayer();
   const steps = [];
   for (let round = 0; round < 3; round += 1) {
@@ -2339,6 +2447,7 @@ function bindLobby() {
   app.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       const action = button.dataset.action;
+      playSfx("click", 0.35);
       captureNickname();
       if (action === "toggle-lack") {
         state.mustLackOneSuit = !state.mustLackOneSuit;
@@ -2476,7 +2585,20 @@ function bindTable() {
   app.querySelectorAll("[data-action]").forEach((button) => {
     button.addEventListener("click", () => {
       const action = button.dataset.action;
+      playSfx("click", 0.35);
       try {
+        // 静音开关：原地改按钮文案（牌桌 fast-path 重绘不刷新头部，避免文案回退）。
+        if (action === "toggle-sound") {
+          const muted = !isSoundMuted();
+          try {
+            localStorage.setItem(SOUND_MUTED_KEY, muted ? "1" : "0");
+          } catch {
+            /* 隐私模式：本次会话内切换仍生效（刷新后回退） */
+          }
+          button.textContent = muted ? "声音：关" : "声音：开";
+          syncBgm();
+          return;
+        }
         if (action === "back") {
           // 左上角"大厅"按钮 = 离开当前牌局/房间：通知服务器清座
           //（对局中该座位由托管代打，牌局不卡死），本地立即回大厅。

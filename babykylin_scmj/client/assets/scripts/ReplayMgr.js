@@ -3,6 +3,7 @@ var ACTION_MOPAI = 2;
 var ACTION_PENG = 3;
 var ACTION_GANG = 4;
 var ACTION_HU = 5;
+var ACTION_ZIMO = 6;
 
 
 cc.Class({
@@ -97,6 +98,11 @@ cc.Class({
         else if(action.type == ACTION_HU){
             //console.log("hu");
             cc.vv.gameNetMgr.doHu({seatindex:action.si,hupai:action.pai,iszimo:false});
+            return 1.5;
+        }
+        else if(action.type == ACTION_ZIMO){
+            // 青阳只能自摸，动作码 6
+            cc.vv.gameNetMgr.doHu({seatindex:action.si,hupai:action.pai,iszimo:true});
             return 1.5;
         }
     }

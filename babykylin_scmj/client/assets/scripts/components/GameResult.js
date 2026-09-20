@@ -4,13 +4,13 @@ cc.Class({
     properties: {
         _gameresult:null,
         _seats:[],
-        // 统计面板：14 项（两列×7行），[显示文案, endinfo字段名]
+        // 统计面板：11 项（两列×6行），[显示文案, endinfo字段名]（青阳只能自摸，无自摸/接炮/点炮项）
         _statDefs: {
             default: [
-                ["自摸", "numzimo"], ["接炮", "numjiepao"], ["点炮", "numdianpao"],
-                ["暗杠", "numangang"], ["弯杠", "numwangang"], ["直杠", "numzhigang"], ["跟打", "numgenfa"],
-                ["小开", "numxiaokai"], ["恩豆", "numendou"], ["跑风", "numpaofeng"],
-                ["对对胡", "numduiduihu"], ["七对", "numqixiaodui"], ["独钓", "numquanqiu"], ["四喜", "numsixi"],
+                ["暗杠", "numangang"], ["弯杠", "numwangang"], ["直杠", "numzhigang"],
+                ["跟打", "numgenfa"], ["小开", "numxiaokai"], ["恩豆", "numendou"],
+                ["跑风", "numpaofeng"], ["对对胡", "numduiduihu"], ["七对", "numqixiaodui"],
+                ["独钓", "numquanqiu"], ["四喜", "numsixi"],
             ],
             visible: false,
         },
@@ -57,10 +57,10 @@ cc.Class({
         // 兜底：cc.Class default 嵌套数组在某些实例化路径下会被置空，强制恢复
         if (!this._statDefs || this._statDefs.length === 0) {
             this._statDefs = [
-                ["自摸", "numzimo"], ["接炮", "numjiepao"], ["点炮", "numdianpao"],
-                ["暗杠", "numangang"], ["弯杠", "numwangang"], ["直杠", "numzhigang"], ["跟打", "numgenfa"],
-                ["小开", "numxiaokai"], ["恩豆", "numendou"], ["跑风", "numpaofeng"],
-                ["对对胡", "numduiduihu"], ["七对", "numqixiaodui"], ["独钓", "numquanqiu"], ["四喜", "numsixi"],
+                ["暗杠", "numangang"], ["弯杠", "numwangang"], ["直杠", "numzhigang"],
+                ["跟打", "numgenfa"], ["小开", "numxiaokai"], ["恩豆", "numendou"],
+                ["跑风", "numpaofeng"], ["对对胡", "numduiduihu"], ["七对", "numqixiaodui"],
+                ["独钓", "numquanqiu"], ["四喜", "numsixi"],
             ];
         }
         this._statRows = [];
@@ -84,13 +84,14 @@ cc.Class({
                     if (cy > maxY) { maxY = cy; }
                 }
                 var topY = maxY;
-                var dy = (labels.children.length > 1 && maxY - minY >= 40) ? (maxY - minY) / 6 : 36;
+                var rowsPerCol = 6;
+                var dy = (labels.children.length > 1 && maxY - minY >= 40) ? (maxY - minY) / (rowsPerCol - 1) : 36;
                 var baseX = tpl.x;
                 var colGap = 128;
                 var created = [];
                 for (var r = 0; r < this._statDefs.length; ++r) {
-                    var col = r < 7 ? 0 : 1;
-                    var row = r % 7;
+                    var col = r < rowsPerCol ? 0 : 1;
+                    var row = r % rowsPerCol;
                     var node = cc.instantiate(tpl);
                     node.x = baseX + col * colGap;
                     node.y = topY - row * dy;
@@ -110,53 +111,39 @@ cc.Class({
         }
     },
 
-    showResult:function(seat,info,isZuiJiaPaoShou,idx){
-        seat.node.getChildByName("zuijiapaoshou").active = isZuiJiaPaoShou;
+    showResult:function(seat,info,idx){
+        seat.node.getChildByName("zuijiapaoshou").active = false; // 青阳只能自摸，无"最佳炮手"
 
         var rows = this._statRows != null ? this._statRows[idx] : null;
-        if(rows != null && rows.length == this._statDefs.length){
-            for(var r = 0; r < rows.length; ++r){
-                var d = this._statDefs[r];
-                var v = info[d[1]] != null ? info[d[1]] : 0;
-                rows[r].string = d[0] + "  " + v;
-            }
-            return;
+        if(rows == null || rows.length != this._statDefs.length){
+            return; // 动态布局未就绪时跳过（旧统计节点已隐藏）
         }
-        // 兜底：动态布局未就绪时回退旧节点
-        seat.node.getChildByName("zimocishu").getComponent(cc.Label).string = info.numzimo;
-        seat.node.getChildByName("jiepaocishu").getComponent(cc.Label).string = info.numjiepao;
-        seat.node.getChildByName("dianpaocishu").getComponent(cc.Label).string = info.numdianpao;
-        seat.node.getChildByName("angangcishu").getComponent(cc.Label).string = info.numangang;
-        seat.node.getChildByName("minggangcishu").getComponent(cc.Label).string = info.numminggang;
-        seat.node.getChildByName("chajiaocishu").getComponent(cc.Label).string = info.numchadajiao;
+        for(var r = 0; r < rows.length; ++r){
+            var d = this._statDefs[r];
+            var v = info[d[1]] != null ? info[d[1]] : 0;
+            rows[r].string = d[0] + "  " + v;
+        }
     },
 
     onGameEnd:function(endinfo){
         var seats = cc.vv.gameNetMgr.seats;
-        var maxscore = -1;
-        var maxdianpao = 0;
-        var dianpaogaoshou = -1;
+        // 起始积分 1000，按 delta（相对起始积分的变化）展示正负值
+        var maxdelta = -Infinity;
         for(var i = 0; i < seats.length; ++i){
-            var seat = seats[i];
-            if(seat.score > maxscore){
-                maxscore = seat.score;
-            }
-            if(endinfo[i].numdianpao > maxdianpao){
-                maxdianpao = endinfo[i].numdianpao;
-                dianpaogaoshou = i;
+            var d = endinfo[i].delta != null ? endinfo[i].delta : 0;
+            if(d > maxdelta){
+                maxdelta = d;
             }
         }
 
         for(var i = 0; i < seats.length; ++i){
             var seat = seats[i];
-            var isBigwin = false;
-            if(seat.score > 0){
-                isBigwin = seat.score == maxscore;
-            }
-            this._seats[i].setInfo(seat.name,seat.score, isBigwin);
+            var delta = endinfo[i].delta != null ? endinfo[i].delta : 0;
+            var isBigwin = delta > 0 && delta == maxdelta;
+            // 起始 1000，正负分展示：正数带 + 号，负数自带 - 号
+            this._seats[i].setInfo(seat.name, delta > 0 ? "+" + delta : delta, isBigwin);
             this._seats[i].setID(seat.userid);
-            var isZuiJiaPaoShou = dianpaogaoshou == i;
-            this.showResult(this._seats[i],endinfo[i],isZuiJiaPaoShou,i);
+            this.showResult(this._seats[i],endinfo[i],i);
         }
     },
 

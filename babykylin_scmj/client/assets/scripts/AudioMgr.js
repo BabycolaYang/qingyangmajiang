@@ -46,26 +46,62 @@ cc.Class({
     // },
     
     getUrl:function(url){
-        return cc.url.raw("resources/sounds/" + url);
+        // 2.x: 走 resources bundle 相对路径（配合 ensureClip 用 cc.resources.load 加载）
+        return "sounds/" + url;
     },
-    
-    playBGM(url){
-        var audioUrl = this.getUrl(url);
-        console.log(audioUrl);
-        if(this.bgmAudioID >= 0){
-            cc.audioEngine.stop(this.bgmAudioID);
+
+    // 按 url 加载 AudioClip 并缓存（Creator 2.x 的 audioEngine.play 只接受 AudioClip 实例）
+    _clipCache: null,
+
+    ensureClip:function(url, cb){
+        var self = this;
+        if(!self._clipCache){
+            self._clipCache = {};
         }
-        this.bgmAudioID = cc.audioEngine.play(audioUrl,true,this.bgmVolume);
+        var cached = self._clipCache[url];
+        if(cached){
+            cb(null, cached);
+            return;
+        }
+        cc.resources.load("sounds/" + url.replace(/\.[^./\\]+$/, ""), cc.AudioClip, function(err, clip){
+            if(err || !clip){
+                cc.warn("AudioMgr load failed:", url, err);
+                cb(err || new Error("load clip failed"));
+                return;
+            }
+            self._clipCache[url] = clip;
+            cb(null, clip);
+        });
     },
-    
+
+    playBGM(url){
+        var self = this;
+        console.log("playBGM", url);
+        self.ensureClip(url, function(err, clip){
+            if(err || !clip){
+                return;
+            }
+            if(self.bgmAudioID >= 0){
+                cc.audioEngine.stop(self.bgmAudioID);
+            }
+            self.bgmAudioID = cc.audioEngine.play(clip, true, self.bgmVolume);
+        });
+    },
+
     playSFX(url){
         if(!url){
             return;
         }
-        var audioUrl = this.getUrl(url);
-        if(this.sfxVolume > 0){
-            var audioId = cc.audioEngine.play(audioUrl,false,this.sfxVolume);
+        var self = this;
+        if(!(self.sfxVolume > 0)){
+            return;
         }
+        self.ensureClip(url, function(err, clip){
+            if(err || !clip){
+                return;
+            }
+            cc.audioEngine.play(clip, false, self.sfxVolume);
+        });
     },
     
     setSFXVolume:function(v){

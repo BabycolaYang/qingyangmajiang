@@ -5,6 +5,7 @@
 var roomMgr = require("./roommgr");
 var userMgr = require("./usermgr");
 var db = require("../utils/db");
+var crypto = require("../utils/crypto");
 var core = require("../../../packages/mahjong-core/src/index.js");
 var fs = require("fs");
 var path = require("path");
@@ -80,7 +81,7 @@ function wdCheck() {
                 }
                 var stNow = game.state;
                 if (stNow.phase == "reaction" && !hasAnyReaction(game)) {
-                    userMgr.broacastInRoom('guo_notify', { seatindex: stNow.lastDiscard ? stNow.lastDiscard.seat : -1, pai: -1 }, game.roomInfo.seats[0].userId, true);
+                    broadcastInGame(game, 'guo_notify', { seatindex: stNow.lastDiscard ? stNow.lastDiscard.seat : -1, pai: -1 }, game.roomInfo.seats[0].userId, true);
                     doDraw(game);
                 }
             }
@@ -232,8 +233,28 @@ function computeReactionForSeat(game, seat) {
 }
 
 // ==================== 操作推送 ====================
-function sendOperations(game, seatData, pai) {
-    var reaction = game.reactions[seatData.seatIndex];
+// 显式按 game 定位的房间广播：多房间机器人共用 userId（-1001/-1002/-1003），
+// roomMgr.userLocation 会被后开房间覆盖，userMgr.broacastInRoom 以 AI userId 反查房间会发错房间，
+// 这里直接遍历 game.roomInfo.seats 发送，彻底绕开全局定位
+function broadcastInGame(game, event, data, sender, includingSender) {
+    if (game == null || game.roomInfo == null) {
+        // 无 game 上下文（未开局解散等）：回退原定位（此时 sender 应为真人，定位可靠）
+        userMgr.broacastInRoom(event, data, sender, includingSender);
+        return;
+    }
+    var seats = game.roomInfo.seats;
+    for (var i = 0; i < seats.length; ++i) {
+        var rs = seats[i];
+        if (rs.userId == sender && includingSender != true) {
+            continue;
+        }
+        userMgr.sendMsg(rs.userId, event, data);
+    }
+}
+
+function sendOperations(game, seatIndex, pai) {
+    var reaction = game.reactions[seatIndex];
+    var userId = game.roomInfo.seats[seatIndex].userId;
     if (hasOperations(reaction)) {
         var data = {
             pai: pai,
@@ -242,20 +263,19 @@ function sendOperations(game, seatData, pai) {
             gang: reaction.canGang,
             gangpai: reaction.gangPai
         };
-        userMgr.sendMsg(seatData.userId, 'game_action_push', data);
-        data.si = seatData.seatIndex;
+        userMgr.sendMsg(userId, 'game_action_push', data);
+        data.si = seatIndex;
     }
     else {
-        userMgr.sendMsg(seatData.userId, 'game_action_push');
+        userMgr.sendMsg(userId, 'game_action_push');
     }
 }
 
 // 刷新指定座位反应并推送（有的话）
 function refreshReaction(game, seat, pai) {
     game.reactions[seat] = computeReactionForSeat(game, seat);
-    var userId = game.roomInfo.seats[seat].userId;
     if (hasOperations(game.reactions[seat])) {
-        sendOperations(game, gameSeatsOfUsers[userId], pai);
+        sendOperations(game, seat, pai);
         return true;
     }
     return false;
@@ -305,15 +325,15 @@ function doDraw(game) {
         return;
     }
 
-    userMgr.broacastInRoom('mj_count_push', getDrawableCount(st), turnUser, true);
+    broadcastInGame(game, 'mj_count_push', getDrawableCount(st), turnUser, true);
     recordGameAction(game, turnSeat, ACTION_MOPAI, TILE_TO_ID[st.lastDraw.tile]);
     userMgr.sendMsg(turnUser, 'game_mopai_push', TILE_TO_ID[st.lastDraw.tile]);
 
     game.reactions[turnSeat] = computeReactionForSeat(game, turnSeat);
 
     // 广播出牌方
-    userMgr.broacastInRoom('game_chupai_push', turnUser, turnUser, true);
-    sendOperations(game, gameSeatsOfUsers[turnUser], -1);
+    broadcastInGame(game, 'game_chupai_push', turnUser, turnUser, true);
+    sendOperations(game, turnSeat, -1);
 
     // AI 座位自动出牌（摸牌后轮到 AI）
     scheduleBots(game);
@@ -337,25 +357,21 @@ function scheduleAutoAdvance(game, delay) {
         var ld = st.lastDiscard;
         if (ld) {
             var discarder = game.roomInfo.seats[ld.seat].userId;
-            userMgr.broacastInRoom('guo_notify_push', { userId: discarder, pai: TILE_TO_ID[ld.tile] }, discarder, true);
+            broadcastInGame(game, 'guo_notify_push', { userId: discarder, pai: TILE_TO_ID[ld.tile] }, discarder, true);
         }
         doDraw(game);
     }, delay);
 }
 
 // ==================== 各动作 ====================
-exports.chuPai = function (userId, pai) {
+// 内部实现显式接收 game/seatIndex：AI 机器人多房间共用 userId，全局 gameSeatsOfUsers 会互相覆盖，
+// 机器人动作必须走 doXxx 直调；真人客户端走 exports 薄壳（真人 userId 唯一，映射可靠）
+function doChuPai(game, seatIndex, pai) {
     pai = Number.parseInt(pai);
-    var seatData = gameSeatsOfUsers[userId];
-    if (seatData == null) {
-        console.log("can't find user game data.");
-        return;
-    }
+    var userId = game.roomInfo.seats[seatIndex].userId;
 
-    var game = seatData.game;
     game.lastActivity = Date.now();
     var st = game.state;
-    var seatIndex = seatData.seatIndex;
 
     if (st.status != "playing") {
         console.log("game is over.");
@@ -396,7 +412,7 @@ exports.chuPai = function (userId, pai) {
     recordGameAction(game, seatIndex, ACTION_CHUPAI, pai);
     clearAllReactions(game);
 
-    userMgr.broacastInRoom('game_chupai_notify_push', { userId: userId, pai: pai }, userId, true);
+    broadcastInGame(game, 'game_chupai_notify_push', { userId: userId, pai: pai }, userId, true);
 
     // 检查其他家是否可胡/碰/点杠
     var hasActions = false;
@@ -416,19 +432,21 @@ exports.chuPai = function (userId, pai) {
 
     // AI 座位自动响应（碰/杠/胡或过）
     scheduleBots(game);
-};
+}
 
-exports.peng = function (userId) {
+exports.chuPai = function (userId, pai) {
     var seatData = gameSeatsOfUsers[userId];
     if (seatData == null) {
         console.log("can't find user game data.");
         return;
     }
+    doChuPai(seatData.game, seatData.seatIndex, pai);
+};
 
-    var game = seatData.game;
+function doPeng(game, seatIndex) {
+    var userId = game.roomInfo.seats[seatIndex].userId;
     game.lastActivity = Date.now();
     var st = game.state;
-    var seatIndex = seatData.seatIndex;
     var reaction = game.reactions[seatIndex];
 
     if (st.phase != "reaction" || !reaction || !reaction.canPeng) {
@@ -449,26 +467,28 @@ exports.peng = function (userId) {
     recordGameAction(game, seatIndex, ACTION_PENG, TILE_TO_ID[tile]);
     clearAllReactions(game);
 
-    userMgr.broacastInRoom('peng_notify_push', { userid: userId, pai: TILE_TO_ID[tile] }, userId, true);
+    broadcastInGame(game, 'peng_notify_push', { userid: userId, pai: TILE_TO_ID[tile] }, userId, true);
 
     // 碰后轮到自己出牌
-    userMgr.broacastInRoom('game_chupai_push', userId, userId, true);
+    broadcastInGame(game, 'game_chupai_push', userId, userId, true);
     refreshReaction(game, seatIndex, -1);
-    sendOperations(game, seatData, -1);
+    sendOperations(game, seatIndex, -1);
     scheduleBots(game);
-};
+}
 
-exports.gang = function (userId, pai) {
+exports.peng = function (userId) {
     var seatData = gameSeatsOfUsers[userId];
     if (seatData == null) {
         console.log("can't find user game data.");
         return;
     }
+    doPeng(seatData.game, seatData.seatIndex);
+};
 
-    var game = seatData.game;
+function doGang(game, seatIndex, pai) {
+    var userId = game.roomInfo.seats[seatIndex].userId;
     game.lastActivity = Date.now();
     var st = game.state;
-    var seatIndex = seatData.seatIndex;
     var reaction = game.reactions[seatIndex];
 
     var tile = null;
@@ -536,34 +556,36 @@ exports.gang = function (userId, pai) {
     clearAllReactions(game);
 
     if (gangtype == "wangang") {
-        userMgr.broacastInRoom('hangang_notify_push', seatIndex, userId, true);
+        broadcastInGame(game, 'hangang_notify_push', seatIndex, userId, true);
     }
-    userMgr.broacastInRoom('gang_notify_push', { userid: userId, pai: TILE_TO_ID[tile], gangtype: gangtype }, userId, true);
+    broadcastInGame(game, 'gang_notify_push', { userid: userId, pai: TILE_TO_ID[tile], gangtype: gangtype }, userId, true);
 
     // 杠后补牌（core 已从墙尾取牌并挂 lastDraw；空过时 lastDraw 为 null）
-    userMgr.broacastInRoom('mj_count_push', getDrawableCount(st), userId, true);
+    broadcastInGame(game, 'mj_count_push', getDrawableCount(st), userId, true);
     if (st.lastDraw) {
         userMgr.sendMsg(userId, 'game_mopai_push', TILE_TO_ID[st.lastDraw.tile]);
     }
 
     // 杠开胡判定已由 core 在杠函数内部 buildAvailableWin 完成
-    userMgr.broacastInRoom('game_chupai_push', userId, userId, true);
+    broadcastInGame(game, 'game_chupai_push', userId, userId, true);
     refreshReaction(game, seatIndex, -1);
-    sendOperations(game, seatData, -1);
+    sendOperations(game, seatIndex, -1);
     scheduleBots(game);
-};
+}
 
-exports.hu = function (userId) {
+exports.gang = function (userId, pai) {
     var seatData = gameSeatsOfUsers[userId];
     if (seatData == null) {
         console.log("can't find user game data.");
         return;
     }
+    doGang(seatData.game, seatData.seatIndex, pai);
+};
 
-    var game = seatData.game;
+function doHu(game, seatIndex) {
+    var userId = game.roomInfo.seats[seatIndex].userId;
     game.lastActivity = Date.now();
     var st = game.state;
-    var seatIndex = seatData.seatIndex;
     var reaction = game.reactions[seatIndex];
 
     if (!reaction || !reaction.canHu) {
@@ -599,7 +621,7 @@ exports.hu = function (userId) {
 
     recordGameAction(game, seatIndex, isZimo ? ACTION_ZIMO : ACTION_HU, huTile == null ? -1 : TILE_TO_ID[huTile]);
 
-    userMgr.broacastInRoom('hu_push', {
+    broadcastInGame(game, 'hu_push', {
         seatindex: seatIndex,
         iszimo: isZimo,
         hupai: isZimo ? -1 : TILE_TO_ID[huTile]
@@ -609,16 +631,20 @@ exports.hu = function (userId) {
     doGameOver(game, userId, false, huTile);
 };
 
-exports.guo = function (userId) {
+exports.hu = function (userId) {
     var seatData = gameSeatsOfUsers[userId];
     if (seatData == null) {
+        console.log("can't find user game data.");
         return;
     }
+    doHu(seatData.game, seatData.seatIndex);
+};
+
+function doGuo(game, seatIndex) {
+    var userId = game.roomInfo.seats[seatIndex].userId;
     userMgr.sendMsg(userId, "guo_result");
 
-    var game = seatData.game;
     var st = game.state;
-    var seatIndex = seatData.seatIndex;
     var reaction = game.reactions[seatIndex];
 
     if (reaction == null) {
@@ -646,9 +672,17 @@ exports.guo = function (userId) {
     var ld = st.lastDiscard;
     if (ld) {
         var discarder = game.roomInfo.seats[ld.seat].userId;
-        userMgr.broacastInRoom('guo_notify_push', { userId: discarder, pai: TILE_TO_ID[ld.tile] }, discarder, true);
+        broadcastInGame(game, 'guo_notify_push', { userId: discarder, pai: TILE_TO_ID[ld.tile] }, discarder, true);
     }
     doDraw(game);
+};
+
+exports.guo = function (userId) {
+    var seatData = gameSeatsOfUsers[userId];
+    if (seatData == null) {
+        return;
+    }
+    doGuo(seatData.game, seatData.seatIndex);
 };
 
 // ==================== AI 机器人 ====================
@@ -677,9 +711,10 @@ function fillWithRobots(roomInfo) {
         s.score = 1000;
         s.ready = true;
         // 先登记定位（广播以 bot userId 定位房间），再广播入座通知
+        // 入座广播直接按座位表直发：多房间机器人 userId 冲突时 userLocation 定位会发错房间
         roomMgr.bindRobot(roomInfo.id, s.userId, i);
         userMgr.bind(s.userId, BOT_SOCKET);
-        userMgr.broacastInRoom('new_user_comes_push', {
+        var joinNotice = {
             userid: s.userId,
             ip: s.ip,
             score: s.score,
@@ -687,7 +722,13 @@ function fillWithRobots(roomInfo) {
             online: true,
             ready: true,
             seatindex: i
-        }, s.userId);
+        };
+        for (var j = 0; j < roomInfo.seats.length; ++j) {
+            var tu = roomInfo.seats[j].userId;
+            if (tu != s.userId) {
+                userMgr.sendMsg(tu, 'new_user_comes_push', joinNotice);
+            }
+        }
     }
 }
 
@@ -746,7 +787,8 @@ function botAct(game, seatIndex) {
             if (game && game.state && game.state.status == "playing") {
                 var uid = game.roomInfo.seats[seatIndex].userId;
                 if (uid != null && uid < 0) {
-                    exports.guo(uid);
+                    // 直调内部版：绕开 gameSeatsOfUsers（多房间机器人 userId 会互相覆盖）
+                    doGuo(game, seatIndex);
                 }
             }
         }
@@ -786,26 +828,39 @@ function botActInner(game, seatIndex) {
             choice = null;
         }
         if (choice && choice.action == "gang" && r.canGang) {
-            exports.gang(userId, r.gangPai[0]);
+            doGang(game, seatIndex, r.gangPai[0]);
             return;
         }
         if (choice && choice.action == "peng" && r.canPeng) {
-            exports.peng(userId);
+            doPeng(game, seatIndex);
             return;
         }
-        exports.guo(userId);
+        doGuo(game, seatIndex);
         return;
     }
 
     if (st.phase == "discard" && st.currentSeat == seatIndex) {
         if (r && hasOperations(r)) {
             if (r.canHu) {
-                exports.hu(userId);
+                doHu(game, seatIndex);
                 return;
             }
             if (r.canGang) {
-                exports.gang(userId, r.gangPai[0]);
-                return;
+                // 缺一门模式下用 core 的安全杠决策过滤：弯杠放行，暗杠若把整门
+                // 锁进副露造成三门僵局（或杠的是缺门）则放弃，直接出牌。
+                var botGangTile = null;
+                if (st.mustLackOneSuit) {
+                    try {
+                        botGangTile = core.chooseBotGangTile(st, seatIndex);
+                    }
+                    catch (e) {
+                        botGangTile = null;
+                    }
+                }
+                if (!st.mustLackOneSuit || botGangTile) {
+                    doGang(game, seatIndex, st.mustLackOneSuit ? TILE_TO_ID[botGangTile] : r.gangPai[0]);
+                    return;
+                }
             }
         }
         var player = st.players[seatIndex];
@@ -823,7 +878,7 @@ function botActInner(game, seatIndex) {
         if (idx == null || idx < 0 || idx >= player.hand.length) {
             idx = 0;
         }
-        exports.chuPai(userId, TILE_TO_ID[player.hand[idx]]);
+        doChuPai(game, seatIndex, TILE_TO_ID[player.hand[idx]]);
     }
 }
 
@@ -886,6 +941,9 @@ exports.begin = function (roomId) {
     games[roomId] = game;
     roomInfo.numOfGames++;
 
+    // 开局即存档（原版时机）：base_info 快照此时为开局 13 张手牌
+    store_game(game);
+
     for (var i = 0; i < seats.length; ++i) {
         var s = seats[i];
         // 通知手牌（core 已按赖子最左理牌，客户端直接按此顺序显示）
@@ -906,12 +964,14 @@ exports.begin = function (roomId) {
     }
 
     // 直接进入打牌阶段（无换三张/定缺）
-    userMgr.broacastInRoom('game_playing_push', null, null, true);
+    // 修复：broacastInRoom 依赖 sender 反查房间，sender=null 时直接 return，
+    // 导致 game_playing_push 从未发出，客户端 gamestate 卡在 begin，中间轮盘不显示
+    broadcastInGame(game, 'game_playing_push', null, null, true);
 
     var dealerUser = seats[game.button].userId;
-    userMgr.broacastInRoom('game_chupai_push', dealerUser, dealerUser, true);
+    broadcastInGame(game, 'game_chupai_push', dealerUser, dealerUser, true);
     refreshReaction(game, game.button, -1);
-    sendOperations(game, gameSeatsOfUsers[dealerUser], -1);
+    sendOperations(game, game.button, -1);
 
     // AI 座位自动行动（庄家是 AI 时自动出牌）
     armWatchdog();
@@ -1000,13 +1060,18 @@ exports.setReady = function (userId, callback) {
 
 // ==================== 结束一局 ====================
 function constructGameBaseInfo(game) {
-    // 存档：直接保存 core 状态与桌面基础信息
+    // 存档（原版格式）：回放所需的开局快照，game_seats 为每人初始 13 张手牌
+    // （客户端 prepareReplay 用它初始化 holds，再由 action_records 从头重放摸牌/出牌）
+    var st = game.state;
     var baseInfo = {
         type: "qingyang",
         button: game.button,
         index: game.gameIndex,
-        coreState: game.state
+        game_seats: []
     };
+    for (var i = 0; i < 4; ++i) {
+        baseInfo.game_seats.push(tilesToIds(st.players[i].hand));
+    }
     return JSON.stringify(baseInfo);
 }
 
@@ -1015,8 +1080,47 @@ function store_game(game, callback) {
     db.create_game(game.roomInfo.uuid, game.gameIndex, baseinfo, callback);
 }
 
+function store_single_history(userId, history) {
+    db.get_user_history(userId, function (data) {
+        if (data == null) {
+            data = [];
+        }
+        while (data.length >= 10) {
+            data.shift();
+        }
+        data.push(history);
+        db.update_user_history(userId, data);
+    });
+}
+
+function store_history(roomInfo) {
+    var seats = roomInfo.seats;
+    var history = {
+        uuid: roomInfo.uuid,
+        id: roomInfo.id,
+        time: roomInfo.createTime,
+        seats: new Array(4)
+    };
+
+    for (var i = 0; i < seats.length; ++i) {
+        var rs = seats[i];
+        var hs = history.seats[i] = {};
+        hs.userid = rs.userId;
+        hs.name = crypto.toBase64(rs.name);
+        hs.score = rs.score;
+    }
+
+    for (var i = 0; i < seats.length; ++i) {
+        var s = seats[i];
+        if (s.userId == null || s.userId < 0) continue; // AI 座位不存历史
+        store_single_history(s.userId, history);
+    }
+}
+
 function doGameOver(game, userId, forceEnd, huTileOverride) {
-    var roomId = roomMgr.getUserRoom(userId);
+    // 房间定位优先用 game：AI 的 userId 在多房间下会被 roomMgr.userLocation 错误覆盖，
+    // 反查会定位到别人的房间导致结算/踢人/销房全错；game 为空（未开局解散）才回退 userId 反查
+    var roomId = (game != null && game.roomInfo != null) ? game.roomInfo.id : roomMgr.getUserRoom(userId);
     if (roomId == null) {
         return;
     }
@@ -1035,9 +1139,7 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
             for (var i = 0; i < roomInfo.seats.length; ++i) {
                 var rs = roomInfo.seats[i];
                 endinfo.push({
-                    numzimo: rs.numZiMo,
-                    numjiepao: rs.numJiePao,
-                    numdianpao: rs.numDianPao,
+                    delta: rs.score - 1000, // 相对起始积分的正负变化
                     numangang: rs.numAnGang,
                     numminggang: rs.numMingGang,
                     numchadajiao: 0,
@@ -1054,9 +1156,10 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
                 });
             }
         }
-        userMgr.broacastInRoom('game_over_push', { results: results, endinfo: endinfo }, userId, true);
+        broadcastInGame(game, 'game_over_push', { results: results, endinfo: endinfo }, userId, true);
         if (isEnd) {
             setTimeout(function () {
+                store_history(roomInfo); // 青阳含 1 圈房，统一写入历史
                 userMgr.kickAllInRoom(roomId);
                 roomMgr.destroy(roomId);
                 db.archive_games(roomInfo.uuid);
@@ -1085,19 +1188,8 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
             var delta = settlement ? settlement.deltas[i] : 0;
             rs.score += delta;
 
-            // 胡牌/点炮统计
+            // 胡牌统计：青阳只能自摸，无接炮/点炮概念
             var isWinner = st.winnerSeat === i && settlement != null;
-            if (isWinner) {
-                if (isZimoWin(game, st)) {
-                    rs.numZiMo += 1;
-                }
-                else {
-                    rs.numJiePao += 1;
-                }
-            }
-            if (settlement != null && !isZimoWin(game, st) && st.lastDiscard && st.lastDiscard.seat === i) {
-                rs.numDianPao += 1;
-            }
 
             // 胡牌牌型统计：恩豆/小开/跑风/七对按基础型；对对胡/全球独钓/四喜按附加项
             if (isWinner && settlement != null && settlement.winDetail != null) {
@@ -1125,6 +1217,12 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
                     else if (bonuses[b].key == "siXi") {
                         rs.numSiXi += 1;
                     }
+                    else if (bonuses[b].key == "wanGang") {
+                        rs.numWanGang += 1; // 杠上开胡非跑风
+                    }
+                    else if (bonuses[b].key == "zhiGang") {
+                        rs.numZhiGang += 1; // 杠上开胡且跑风
+                    }
                 }
             }
 
@@ -1136,7 +1234,8 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
                 }
             }
 
-            // 杠统计（弯杠=碰后补杠；直杠=直杠别人打牌，同时计入跑风次数）
+            // 杠动作统计（青阳"弯杠/直杠"是胡牌附加型，已在 bonuses 中判定：
+            // 弯杠=杠上开胡非跑风，直杠=杠上开胡且跑风；这里只数动作次数）
             var numGangs = 0;
             for (var m = 0; m < sp.melds.length; ++m) {
                 var mt = sp.melds[m].type;
@@ -1144,15 +1243,8 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
                     rs.numAnGang += 1;
                     numGangs++;
                 }
-                else if (mt == "mingGang") {
+                else if (mt == "mingGang" || mt == "buGang") {
                     rs.numMingGang += 1;
-                    rs.numZhiGang += 1;
-                    rs.numPaoFeng += 1;
-                    numGangs++;
-                }
-                else if (mt == "buGang") {
-                    rs.numMingGang += 1;
-                    rs.numWanGang += 1;
                     numGangs++;
                 }
             }
@@ -1269,32 +1361,30 @@ function doGameOver(game, userId, forceEnd, huTileOverride) {
         fnNoticeResult(true);
     }
     else {
-        // 保存游戏
-        store_game(game, function (ret) {
-            db.update_game_result(roomInfo.uuid, game.gameIndex, dbresult);
-            // 记录打牌信息
-            var str = JSON.stringify(game.actionList);
-            db.update_game_action_records(roomInfo.uuid, game.gameIndex, str);
-            // 保存游戏局数
-            db.update_num_of_turns(roomId, roomInfo.numOfGames);
+        // 局结束：开局时已 create_game 存档，这里只更新结果与动作记录
+        db.update_game_result(roomInfo.uuid, game.gameIndex, dbresult);
+        // 记录打牌信息
+        var str = JSON.stringify(game.actionList);
+        db.update_game_action_records(roomInfo.uuid, game.gameIndex, str);
+        // 保存游戏局数
+        db.update_num_of_turns(roomId, roomInfo.numOfGames);
 
-            // 如果是第一次，并且不是强制解散 则扣除房卡（座位0是 AI 时改扣房主；机器人局免房卡）
-            if (roomInfo.numOfGames == 1 && !(roomInfo.conf.robots)) {
-                var cost = 2;
-                if (roomInfo.conf.maxGames >= 4) {
-                    cost = 3;
-                }
-                var payUser = roomInfo.seats[0].userId;
-                if (payUser < 0) {
-                    payUser = roomInfo.conf.creator;
-                }
-                db.cost_gems(payUser, cost);
+        // 如果是第一次，并且不是强制解散 则扣除房卡（座位0是 AI 时改扣房主；机器人局免房卡）
+        if (roomInfo.numOfGames == 1 && !(roomInfo.conf.robots)) {
+            var cost = 2;
+            if (roomInfo.conf.maxGames >= 4) {
+                cost = 3;
             }
+            var payUser = roomInfo.seats[0].userId;
+            if (payUser < 0) {
+                payUser = roomInfo.conf.creator;
+            }
+            db.cost_gems(payUser, cost);
+        }
 
-            // 圈数制：maxGames 复用为圈数上限，打满 N 圈结束（N 圈 = 庄家轮转 N 个来回，连庄局不计圈）
-            var isEnd = ((roomInfo.numOfQuans || 0) >= roomInfo.conf.maxGames);
-            fnNoticeResult(isEnd);
-        });
+        // 圈数制：maxGames 复用为圈数上限，打满 N 圈结束（N 圈 = 庄家轮转 N 个来回，连庄局不计圈）
+        var isEnd = ((roomInfo.numOfQuans || 0) >= roomInfo.conf.maxGames);
+        fnNoticeResult(isEnd);
     }
 }
 

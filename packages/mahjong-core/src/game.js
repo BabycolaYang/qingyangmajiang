@@ -339,6 +339,7 @@ function runFengAfterGang(nextState, player) {
   return canRunFeng(player.hand, nextState.laiziTile, {
     mustLackOneSuit: nextState.mustLackOneSuit,
     exposedMeldCount: player.melds.length,
+    exposedSuits: exposedSuitList(player),
   });
 }
 
@@ -367,6 +368,7 @@ export function drawForCurrentSeat(state, options = {}) {
   const wasRunFengBeforeDraw = canRunFeng(player.hand, nextState.laiziTile, {
     mustLackOneSuit: nextState.mustLackOneSuit,
     exposedMeldCount: player.melds.length,
+    exposedSuits: exposedSuitList(player),
   });
   nextState.runFengBeforeDraw[player.seat] = wasRunFengBeforeDraw;
 
@@ -762,10 +764,13 @@ export function chooseBotDiscardIndex(player, laiziTile, options = {}) {
   }
 
   const { mustLackOneSuit = false, ruleConfig } = options;
-  // 打缺感知：缺一门模式下，若手牌仍横跨 3 门数字牌，锁定数量最少的一门作为
-  // 目标缺门；打这门牌获得大额加分，确保机器人会主动打缺。
+  // 打缺感知：缺一门模式下，若"手牌 ∪ 副露"仍横跨 3 门数字牌，锁定需要打掉
+  // 的一门作为目标缺门（副露已占的门打不掉，不参与候选）；打这门牌获得大额
+  // 加分，确保机器人会主动打缺。
   // （此时 resolveWinType 对所有候选都返回 0 进张，加分项可完全主导出牌选择。）
-  const lackSuit = mustLackOneSuit ? chooseLackSuit(player.hand).suit : null;
+  const lackSuit = mustLackOneSuit
+    ? chooseLackSuit(player.hand, exposedSuitList(player)).suit
+    : null;
 
   const exposedMeldCount = player.melds?.length ?? 0;
   const candidates = player.hand.map((tile, index) => {
@@ -773,6 +778,7 @@ export function chooseBotDiscardIndex(player, laiziTile, options = {}) {
     const winningDraws = countWinningDraws(remaining, laiziTile, {
       exposedMeldCount,
       mustLackOneSuit,
+      exposedSuits: exposedSuitList(player),
       ruleConfig,
     });
     const structureScore = scoreHandStructure(remaining, laiziTile);
@@ -799,13 +805,23 @@ export function chooseBotDiscardIndex(player, laiziTile, options = {}) {
 
 // 反应阶段的机器人碰/杠决策：返回 { action: "gang" | "peng", tile } 或 null（过）。
 // 规则：明杠基本必杠（多摸一张牌且保持结构）；碰牌要求不亏结构（成刻 +90 能
-// 弥补拆搭损失），且不碰赖子、不碰属于应打缺花色的牌。
+// 弥补拆搭损失），且不碰赖子、不碰属于应打缺花色的牌；缺一门模式下还需评估
+// 碰后"手牌 ∪ 副露"是否三门齐——碰了筒家里就不能同时留万和条。
 export function chooseBotReaction(state, seat) {
   const player = state.players[seat];
+  const exposedSuits = exposedSuitList(player);
 
   const gangOptions = getMingGangOptions(state, seat);
-  if (gangOptions.length > 0 && !isBlockedForLack(player.hand, gangOptions[0], state.mustLackOneSuit)) {
-    return { action: "gang", tile: gangOptions[0] };
+  if (
+    gangOptions.length > 0 &&
+    !isBlockedForLack(player.hand, gangOptions[0], state.mustLackOneSuit, exposedSuits)
+  ) {
+    // 明杠与碰一致：杠后手牌 10 张（去 3 张），评估是否三门僵局。
+    const gangRemaining = [...player.hand];
+    removeTiles(gangRemaining, gangOptions[0], 3);
+    if (!reactionWouldStallThreeSuits(state, exposedSuits, gangOptions[0], gangRemaining)) {
+      return { action: "gang", tile: gangOptions[0] };
+    }
   }
 
   const pengOptions = getPengOptions(state, seat);
@@ -817,7 +833,7 @@ export function chooseBotReaction(state, seat) {
   if (tile === state.laiziTile) {
     return null;
   }
-  if (isBlockedForLack(player.hand, tile, state.mustLackOneSuit)) {
+  if (isBlockedForLack(player.hand, tile, state.mustLackOneSuit, exposedSuits)) {
     return null;
   }
 
@@ -829,7 +845,64 @@ export function chooseBotReaction(state, seat) {
   if (scoreAfter < scoreBefore - 12) {
     return null;
   }
+
+  // 缺一门模式下，碰后手牌 ∪ 副露若三门齐，必须把手上另一门全部打掉才能回到
+  // 缺门形态。需要打掉的张数超过 2 张就不碰，避免"碰完家里还留两门"的僵局。
+  if (reactionWouldStallThreeSuits(state, exposedSuits, tile, remaining)) {
+    return null;
+  }
+
   return { action: "peng", tile };
+}
+
+// 缺一门模式下机器人的自摸回合杠决策（暗杠/弯杠）：
+// - 弯杠（补杠）不新增副露花色（碰的门已在副露），永远安全，优先执行；
+// - 暗杠会把整门锁进副露，若因此手牌 ∪ 副露三门僵局（需打 >2 张）或该牌属于
+//   当前缺门，则放弃暗杠。
+// 返回应杠的牌名，无安全杠时返回 null。
+export function chooseBotGangTile(state, seat) {
+  const player = state.players[seat];
+  const exposedSuits = exposedSuitList(player);
+  const buOptions = getBuGangOptions(state, seat);
+  if (buOptions.length > 0) {
+    return buOptions[0];
+  }
+  const anOptions = getAnGangOptions(state, seat);
+  for (const tile of anOptions) {
+    if (isBlockedForLack(player.hand, tile, state.mustLackOneSuit, exposedSuits)) {
+      continue;
+    }
+    const anRemaining = [...player.hand];
+    removeTiles(anRemaining, tile, 3);
+    if (reactionWouldStallThreeSuits(state, exposedSuits, tile, anRemaining)) {
+      continue;
+    }
+    return tile;
+  }
+  return null;
+}
+
+// 缺一门模式下碰/杠的三门僵局评估：把 tile 锁进副露后，若"手牌 ∪ 副露"三门齐
+// 且除最大门外仍需打掉超过 2 张，判定为僵局（长时间无法回到缺门形态）。
+// remaining 为操作完成后的预期手牌（碰：去 2 张；明杠/暗杠：去 3 张）。
+// 字牌（风/箭）不占数字门：碰字牌本身不新增花色，但仍须评估手牌——手牌已三门
+// 僵局时碰/杠任何牌（含字牌）都会把局面锁死，一律放弃。
+function reactionWouldStallThreeSuits(state, exposedSuits, tile, remaining) {
+  if (!state.mustLackOneSuit) {
+    return false;
+  }
+  const exposedNumberSuits = new Set(exposedSuits.filter((suit) => SUITS.includes(suit)));
+  if (isNumberTile(tile)) {
+    exposedNumberSuits.add(getSuit(tile));
+  }
+  const handSuits = SUITS.filter((suit) => countSuitTiles(remaining, suit) > 0);
+  if (new Set([...exposedNumberSuits, ...handSuits]).size < 3) {
+    return false;
+  }
+  const handSuitCounts = handSuits.map((suit) => countSuitTiles(remaining, suit));
+  const toDiscard =
+    handSuitCounts.reduce((total, count) => total + count, 0) - Math.max(...handSuitCounts);
+  return toDiscard > 2;
 }
 
 // 统计手牌中某数字花色的张数。
@@ -840,15 +913,26 @@ function countSuitTiles(tiles, suit) {
   );
 }
 
-// 定缺目标：手牌横跨 3 门数字牌时，返回张数最少的花色；已缺门（≤2 门）则返回 null。
-function chooseLackSuit(tiles) {
+// 定缺目标：手牌 ∪ 副露横跨 ≥3 门数字牌时，返回需要打掉的花色。
+// 副露（碰/杠）已占的门打不掉，缺门只能从手牌剩余门里选张数最少的；
+// 例如已碰筒子、手牌万条筒三门 → 缺门在万/条中选。若只看手牌选了筒，
+// 打完后手牌仍万条两门 + 副露筒 = 三门齐，永远无法开牌。
+function chooseLackSuit(tiles, excludeSuits = []) {
+  const excluded = new Set(excludeSuits);
   const suitsInHand = SUITS.filter((suit) => countSuitTiles(tiles, suit) > 0);
-  if (suitsInHand.length < 3) {
+  // 手牌 ∪ 副露不足三门：已是合法缺门形态，无需打缺。
+  const unionSuits = new Set([...suitsInHand, ...excluded]);
+  if (unionSuits.size < 3) {
     return { suit: null, count: 0 };
   }
-  let lackSuit = suitsInHand[0];
+  const candidates = suitsInHand.filter((suit) => !excluded.has(suit));
+  if (candidates.length === 0) {
+    // 手牌数字门全部被副露覆盖：手上没有可选缺门。
+    return { suit: null, count: 0 };
+  }
+  let lackSuit = candidates[0];
   let lackCount = countSuitTiles(tiles, lackSuit);
-  for (const suit of suitsInHand.slice(1)) {
+  for (const suit of candidates.slice(1)) {
     const count = countSuitTiles(tiles, suit);
     if (count < lackCount) {
       lackSuit = suit;
@@ -858,19 +942,26 @@ function chooseLackSuit(tiles) {
   return { suit: lackSuit, count: lackCount };
 }
 
+// 副露（碰/杠）占用的花色列表：缺一门判定须与手牌取并集，
+// 碰/杠也算一门——手牌两门 + 副露第三门即三门齐，不可开牌。
+function exposedSuitList(player) {
+  return (player.melds ?? []).map((meld) => getSuit(meld.tile));
+}
+
 // 缺一门模式下，判断这张牌是否属于应打缺的花色（此时碰/杠会把它锁进副露，妨碍打缺）。
-function isBlockedForLack(tiles, tile, mustLackOneSuit) {
+// excludeSuits 为该玩家副露已占的花色，定缺时须排除。
+function isBlockedForLack(tiles, tile, mustLackOneSuit, excludeSuits = []) {
   if (!mustLackOneSuit || !isNumberTile(tile)) {
     return false;
   }
-  const { suit: lackSuit } = chooseLackSuit(tiles);
+  const { suit: lackSuit } = chooseLackSuit(tiles, excludeSuits);
   return lackSuit !== null && getSuit(tile) === lackSuit;
 }
 
 function countWinningDraws(waitingTiles, laiziTile, options = {}) {
-  const { exposedMeldCount = 0, mustLackOneSuit = false, ruleConfig } = options;
+  const { exposedMeldCount = 0, mustLackOneSuit = false, exposedSuits = [], ruleConfig } = options;
   const config = normalizeRuleConfig(ruleConfig);
-  if (canRunFeng(waitingTiles, laiziTile, { exposedMeldCount, mustLackOneSuit })) {
+  if (canRunFeng(waitingTiles, laiziTile, { exposedMeldCount, mustLackOneSuit, exposedSuits })) {
     // 全听手摸任何牌都胡，但按跑风分类结算（跑数按闲赖子数）：相应基础型全部关闭时，
     // 全听手反而一手不可胡（0 进张），避免机器人在受限房间里高估全听型。
     // 恩豆只看无赖子；有赖子时至少按 1 跑档（0 闲=赖子全被搭子用掉）。
@@ -891,6 +982,7 @@ function countWinningDraws(waitingTiles, laiziTile, options = {}) {
       laiziTile,
       exposedMeldCount,
       mustLackOneSuit,
+      exposedSuits,
       ruleConfig,
     });
     return total + (winType ? 1 : 0);
@@ -977,6 +1069,7 @@ function buildAvailableWin(state, seat, extra) {
     mustLackOneSuit: state.mustLackOneSuit,
     exposedMeldCount: player.melds.length,
     melds: player.melds,
+    exposedSuits: exposedSuitList(player),
     ruleConfig: state.ruleConfig,
     idleLaiziCount: countIdleLaizi(preDrawTiles, state.laiziTile),
     ...extra,

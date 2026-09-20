@@ -138,7 +138,7 @@ export function normalizeRuleConfig(config) {
 
 // ==================== 基础胡牌结构（沿用原有判定） ====================
 
-export function hasLackOneSuit(tiles, laiziTile) {
+export function hasLackOneSuit(tiles, laiziTile, exposedSuits = []) {
   const presentSuits = new Set();
   for (const tile of tiles) {
     assertTile(tile);
@@ -151,14 +151,21 @@ export function hasLackOneSuit(tiles, laiziTile) {
       presentSuits.add(suit);
     }
   }
+  // 碰/杠的副露同样占一门：缺一门以"手牌 ∪ 副露"的花色并集判定，
+  // 防止手牌两门 + 碰杠第三门凑齐三门的"假缺门"开牌。
+  for (const suit of exposedSuits) {
+    if (SUITS.includes(suit)) {
+      presentSuits.add(suit);
+    }
+  }
   return presentSuits.size <= 2;
 }
 
 export function canPingHu(tiles, laiziTile, options = {}) {
   assertTile(laiziTile);
-  const { mustLackOneSuit = false, exposedMeldCount = 0 } = options;
+  const { mustLackOneSuit = false, exposedMeldCount = 0, exposedSuits = [] } = options;
 
-  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile, exposedSuits)) {
     return false;
   }
 
@@ -172,9 +179,9 @@ export function canPingHu(tiles, laiziTile, options = {}) {
 
 export function canHu(tiles, laiziTile, options = {}) {
   assertTile(laiziTile);
-  const { mustLackOneSuit = false, runFeng = false, exposedMeldCount = 0 } = options;
+  const { mustLackOneSuit = false, runFeng = false, exposedMeldCount = 0, exposedSuits = [] } = options;
 
-  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile, exposedSuits)) {
     return false;
   }
 
@@ -182,15 +189,15 @@ export function canHu(tiles, laiziTile, options = {}) {
     return canStandardHu(tiles, laiziTile, { exposedMeldCount });
   }
 
-  return canPingHu(tiles, laiziTile, { mustLackOneSuit, exposedMeldCount });
+  return canPingHu(tiles, laiziTile, { mustLackOneSuit, exposedMeldCount, exposedSuits });
 }
 
 export function canRunFeng(waitingTiles, laiziTile, options = {}) {
   assertTile(laiziTile);
-  const { mustLackOneSuit = false, exposedMeldCount = 0 } = options;
+  const { mustLackOneSuit = false, exposedMeldCount = 0, exposedSuits = [] } = options;
 
   // 打缺时手牌必须已缺门：横跨三门时无论摸什么牌都无法开牌，谈不上跑风。
-  if (mustLackOneSuit && !hasLackOneSuit(waitingTiles, laiziTile)) {
+  if (mustLackOneSuit && !hasLackOneSuit(waitingTiles, laiziTile, exposedSuits)) {
     return false;
   }
 
@@ -198,12 +205,13 @@ export function canRunFeng(waitingTiles, laiziTile, options = {}) {
     const tiles = [...waitingTiles, drawnTile];
     // 打缺时，摸到会破坏缺门的那门牌本就无法开牌，该牌不参与跑风判定；
     // 其余牌摸到即能开牌才算跑风（否则打缺房永远无法跑风）。
-    if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
+    if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile, exposedSuits)) {
       return true;
     }
     return canHu(tiles, laiziTile, {
       mustLackOneSuit,
       exposedMeldCount,
+      exposedSuits,
       runFeng: true,
     });
   });
@@ -310,12 +318,12 @@ export function countIdleLaizi(waitingTiles, laiziTile) {
 // 7 个对子；4 张同牌算 2 对；最多 1 个赖子（赖子须与单张配对）。
 export function canQiXiaoDui(tiles, laiziTile, options = {}) {
   assertTile(laiziTile);
-  const { mustLackOneSuit = false } = options;
+  const { mustLackOneSuit = false, exposedSuits = [] } = options;
 
   if (!Array.isArray(tiles) || tiles.length !== 14) {
     return false;
   }
-  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile)) {
+  if (mustLackOneSuit && !hasLackOneSuit(tiles, laiziTile, exposedSuits)) {
     return false;
   }
 
@@ -348,6 +356,11 @@ export function canQiXiaoDui(tiles, laiziTile, options = {}) {
 // 全手由刻子加一对将组成；规则口径是"开牌时没有顺子"——
 // 既能摆成全刻、又能摆出顺子的牌（如 223344 可摆 22/33/44 也可摆 234/234）
 // 一旦存在含顺子的开牌拆解即不算对对胡。
+// 跑风口径：摸牌前听牌的拆解已定死，摸上来的牌只能和闲赖子组成将或刻子，
+// 不能再与听牌里的真牌重新组合。因此跑风时只认两种形态：
+//   A. 摸牌 + 1 闲赖 = 将，其余（真牌 + 剩余赖子）必须能全拆成刻子；
+//   B. 摸牌 + 2 闲赖 = 刻，其余必须能拆成全刻子 + 一对将（赖子可补）。
+// 听牌部分存在"全刻"拆法即取最优（如 111222333 既可摆顺也可摆刻，算对对胡）。
 // 全球独钓（4 组副露只剩对子开牌）不属于对对胡。
 function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
   const key = `${counts.join(",")}|${laiziCount}`;
@@ -390,11 +403,41 @@ function canFormTripletGroups(counts, laiziCount, memo = new Map()) {
   return result;
 }
 
-export function isDuiDuiHu(tiles, laiziTile, melds = []) {
+// 判定 counts 能否在赖子补位下组成"全刻子 + 一对将"（跑风形态 B 用）。
+function canFormTripletGroupsWithPair(counts, laiziCount, memo = new Map()) {
+  const key = `pair|${counts.join(",")}|${laiziCount}`;
+  if (memo.has(key)) {
+    return memo.get(key);
+  }
+
+  let result = false;
+  // 选将：2 真 / 1 真 1 赖 / 2 赖，其余全刻
+  for (let index = 0; index < counts.length && !result; index += 1) {
+    if (counts[index] >= 2) {
+      const nextCounts = [...counts];
+      nextCounts[index] -= 2;
+      result = canFormTripletGroups(nextCounts, laiziCount, memo);
+    }
+    if (!result && counts[index] >= 1 && laiziCount >= 1) {
+      const nextCounts = [...counts];
+      nextCounts[index] -= 1;
+      result = canFormTripletGroups(nextCounts, laiziCount - 1, memo);
+    }
+  }
+  if (!result && laiziCount >= 2) {
+    result = canFormTripletGroups(counts, laiziCount - 2, memo);
+  }
+
+  memo.set(key, result);
+  return result;
+}
+
+export function isDuiDuiHu(tiles, laiziTile, melds = [], options = {}) {
   assertTile(laiziTile);
   if (!Array.isArray(tiles)) {
     return false;
   }
+  const { isRunFeng = false, drawnTile = null } = options ?? {};
 
   // 副露必须全部是刻子型（碰/杠；赖子替位的碰仍算刻子），出现顺子型副露直接不成立。
   const meldList = Array.isArray(melds) ? melds : [];
@@ -418,6 +461,39 @@ export function isDuiDuiHu(tiles, laiziTile, melds = []) {
   }
 
   const laiziCount = countTile(tiles, laiziTile);
+
+  // 跑风口径：听牌（摸牌前）的拆解已定死，摸上来的牌只能和闲赖子组成
+  // 将或刻子，不能再与听牌里的真牌重新组合（drawnTile 缺失时保持原口径）。
+  if (isRunFeng && drawnTile) {
+    const counts = countTiles(tiles);
+    const laiziIndex = TILE_INDEX.get(laiziTile);
+    // 先摘掉摸上来的那张牌，剩下的赖子就是听牌时定死的闲赖子。
+    counts[TILE_INDEX.get(drawnTile)] -= 1;
+    const idleLaizi = counts[laiziIndex];
+
+    // 形态 A：摸牌 + 1 闲赖凑成将，其余真牌 + 剩余闲赖必须能全拆成刻子。
+    if (idleLaizi >= 1) {
+      const restCounts = [...counts];
+      restCounts[laiziIndex] -= 1;
+      const restLaizi = restCounts[laiziIndex];
+      restCounts[laiziIndex] = 0;
+      if (canFormTripletGroups(restCounts, restLaizi, new Map())) {
+        return true;
+      }
+    }
+    // 形态 B：摸牌 + 2 闲赖凑成刻子，其余真牌 + 剩余闲赖拆成全刻 + 一对将。
+    if (idleLaizi >= 2) {
+      const restCounts = [...counts];
+      restCounts[laiziIndex] -= 2;
+      const restLaizi = restCounts[laiziIndex];
+      restCounts[laiziIndex] = 0;
+      if (canFormTripletGroupsWithPair(restCounts, restLaizi, new Map())) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   const counts = countTiles(tiles);
   counts[TILE_INDEX.get(laiziTile)] = 0;
 
@@ -483,6 +559,7 @@ function buildWinDetail({
   laiziTile,
   melds,
   exposedMeldCount = 0,
+  drawnTile = null,
 }) {
   const bonuses = [];
 
@@ -512,7 +589,7 @@ function buildWinDetail({
     } else if (
       config.rules.duiDuiHu &&
       !isQuanQiuDuDiao &&
-      isDuiDuiHu(tiles, laiziTile, melds)
+      isDuiDuiHu(tiles, laiziTile, melds, { isRunFeng, drawnTile })
     ) {
       bonuses.push({ key: "duiDuiHu", label: BONUS_LABELS.duiDuiHu, zi: BONUS_ZI.duiDuiHu });
     }
@@ -559,9 +636,11 @@ export function resolveWinDetail(context) {
     laiziTile,
     mustLackOneSuit = false,
     exposedMeldCount = 0,
+    exposedSuits = [],
     isGangDraw = false,
     wasRunFengBeforeGang = false,
     wasRunFengBeforeDraw = false,
+    drawnTile = null,
     idleLaiziCount,
     melds = [],
     ruleConfig,
@@ -576,7 +655,7 @@ export function resolveWinDetail(context) {
   if (
     config.rules.qiXiaoDui &&
     exposedMeldCount === 0 &&
-    canQiXiaoDui(tiles, laiziTile, { mustLackOneSuit })
+    canQiXiaoDui(tiles, laiziTile, { mustLackOneSuit, exposedSuits })
   ) {
     return buildWinDetail({
       baseType: WIN_TYPES.QI_XIAO_DUI,
@@ -586,6 +665,7 @@ export function resolveWinDetail(context) {
       tiles,
       laiziTile,
       melds,
+      drawnTile,
     });
   }
 
@@ -621,7 +701,7 @@ export function resolveWinDetail(context) {
   }
 
   // 仍须满足标准胡牌结构（顺子/刻子/将，含赖子补位）
-  if (!canHu(tiles, laiziTile, { mustLackOneSuit, exposedMeldCount, runFeng: isRunFeng })) {
+  if (!canHu(tiles, laiziTile, { mustLackOneSuit, exposedMeldCount, exposedSuits, runFeng: isRunFeng })) {
     return null;
   }
 
@@ -634,6 +714,7 @@ export function resolveWinDetail(context) {
     laiziTile,
     melds,
     exposedMeldCount,
+    drawnTile,
   });
 }
 

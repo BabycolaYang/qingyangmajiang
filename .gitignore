@@ -18,4 +18,8 @@ babykylin_scmj/client/temp/
 babykylin_scmj/client/local/
 # 构建产物例外：web-mobile 需要入库（服务器部署直接 clone 即用）
 !babykylin_scmj/client/build/
+# 临时备份与调试截图，不入库
+*.bak
+*.bak_*
+e2e_*.png
 

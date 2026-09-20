@@ -89,6 +89,9 @@ exports.start = function(conf,mgr){
 				var online = false;
 				if(rs.userId > 0){
 					online = userMgr.isOnline(rs.userId);
+				}else if(rs.userId < 0){
+					// 机器人（负数 userId）没有真实 socket，始终视为在线
+					online = true;
 				}
 
 				seats.push({
