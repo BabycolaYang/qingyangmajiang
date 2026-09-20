@@ -4,13 +4,9 @@
   "private": true,
   "type": "module",
   "workspaces": [
-    "apps/*",
     "packages/*"
   ],
   "scripts": {
-    "test": "node --test packages/mahjong-core/test/*.test.js apps/server/test/*.test.js"
-  },
-  "dependencies": {
-    "pixi.js": "^8.19.0"
+    "test": "node --test packages/mahjong-core/test/*.test.js"
   }
 }
